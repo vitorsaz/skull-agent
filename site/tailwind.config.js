@@ -8,19 +8,19 @@ module.exports = {
   theme: {
     extend: {
       colors: {
-        void: '#000000',
-        abyss: '#050505',
-        dark: '#0a0a0a',
-        surface: '#111111',
+        void: '#030303',
+        abyss: '#080808',
+        dark: '#0f0f0f',
+        surface: '#151515',
         skull: {
-          border: '#1a1a1a',
-          blood: '#8B0000',
-          'blood-bright': '#B22222',
+          border: '#252525',
+          blood: '#9B0000',
+          'blood-bright': '#C42222',
           'blood-glow': '#DC143C',
-          bone: '#2a2a2a',
-          text: '#666666',
-          'text-dim': '#444444',
-          'text-bright': '#888888',
+          bone: '#353535',
+          text: '#808080',
+          'text-dim': '#555555',
+          'text-bright': '#a0a0a0',
         }
       },
       fontFamily: {
