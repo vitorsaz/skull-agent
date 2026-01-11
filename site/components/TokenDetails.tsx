@@ -55,7 +55,7 @@ export default function TokenDetails({ ca, onClose }: TokenDetailsProps) {
   const [loading, setLoading] = useState(true)
   const [copied, setCopied] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [activeSection, setActiveSection] = useState<'overview' | 'analysis' | 'signals'>('overview')
+  const [activeSection, setActiveSection] = useState<'overview' | 'analysis' | 'signals' | 'ca'>('overview')
 
   useEffect(() => {
     fetchTokenData()
@@ -234,7 +234,7 @@ export default function TokenDetails({ ca, onClose }: TokenDetailsProps) {
 
               {/* Tabs */}
               <div className="flex border-b border-skull-border">
-                {['overview', 'analysis', 'signals'].map((tab) => (
+                {['overview', 'analysis', 'signals', 'ca'].map((tab) => (
                   <button
                     key={tab}
                     onClick={() => setActiveSection(tab as any)}
@@ -442,6 +442,77 @@ export default function TokenDetails({ ca, onClose }: TokenDetailsProps) {
                         </div>
                       </div>
                     ))}
+                  </div>
+                )}
+
+                {/* CA TAB */}
+                {activeSection === 'ca' && (
+                  <div className="space-y-4">
+                    <div className="text-center py-4">
+                      <p className="text-skull-text-dim text-xs mb-2">CONTRACT ADDRESS</p>
+                      <h3 className="text-skull-text-bright text-lg font-bold">{token.symbol}</h3>
+                    </div>
+
+                    {/* Big CA Display */}
+                    <div
+                      onClick={copyToClipboard}
+                      className={`p-4 border-2 rounded-lg cursor-pointer transition-all text-center ${
+                        copied
+                          ? 'bg-green-500/20 border-green-500'
+                          : 'border-skull-border hover:border-skull-blood hover:bg-skull-blood/10'
+                      }`}
+                    >
+                      <p className={`font-mono text-sm break-all ${copied ? 'text-green-500' : 'text-skull-text'}`}>
+                        {ca}
+                      </p>
+                      <p className={`text-xs mt-3 ${copied ? 'text-green-500' : 'text-skull-text-dim'}`}>
+                        {copied ? '✓ COPIED TO CLIPBOARD!' : 'CLICK TO COPY'}
+                      </p>
+                    </div>
+
+                    {/* Quick Actions */}
+                    <div className="grid grid-cols-2 gap-3">
+                      <a
+                        href={`https://pump.fun/${ca}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="p-4 text-center border border-skull-border rounded-lg hover:border-skull-blood hover:bg-skull-blood/10 transition-colors"
+                      >
+                        <p className="text-skull-text font-medium">PUMP.FUN</p>
+                        <p className="text-skull-text-dim text-[10px] mt-1">View on pump.fun</p>
+                      </a>
+                      <a
+                        href={`https://dexscreener.com/solana/${ca}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="p-4 text-center border border-skull-border rounded-lg hover:border-skull-blood hover:bg-skull-blood/10 transition-colors"
+                      >
+                        <p className="text-skull-text font-medium">DEXSCREENER</p>
+                        <p className="text-skull-text-dim text-[10px] mt-1">View chart</p>
+                      </a>
+                    </div>
+
+                    {/* Token Info */}
+                    <div className="bg-void border border-skull-border rounded-lg p-3 space-y-2">
+                      <div className="flex justify-between text-xs">
+                        <span className="text-skull-text-dim">Name</span>
+                        <span className="text-skull-text">{token.name}</span>
+                      </div>
+                      <div className="flex justify-between text-xs">
+                        <span className="text-skull-text-dim">Symbol</span>
+                        <span className="text-skull-text">${token.symbol}</span>
+                      </div>
+                      <div className="flex justify-between text-xs">
+                        <span className="text-skull-text-dim">Market Cap</span>
+                        <span className="text-skull-text">{formatMcap(token.usdMarketCap)}</span>
+                      </div>
+                      {token.complete && (
+                        <div className="flex justify-between text-xs">
+                          <span className="text-skull-text-dim">Status</span>
+                          <span className="text-green-400">GRADUATED</span>
+                        </div>
+                      )}
+                    </div>
                   </div>
                 )}
               </div>
