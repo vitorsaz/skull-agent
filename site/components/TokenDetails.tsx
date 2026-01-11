@@ -296,53 +296,13 @@ export default function TokenDetails({ ca, onClose }: TokenDetailsProps) {
                       </div>
                     </div>
 
-                    {/* Social Links */}
-                    <div className="grid grid-cols-3 gap-2">
-                      <a
-                        href={token.twitter || '#'}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className={`p-2 text-center border rounded text-xs transition-colors ${
-                          token.twitter
-                            ? 'border-skull-border hover:border-skull-blood text-skull-text'
-                            : 'border-skull-border/50 text-skull-text-dim cursor-not-allowed'
-                        }`}
-                      >
-                        {token.twitter ? '✓ TWITTER' : '✗ TWITTER'}
-                      </a>
-                      <a
-                        href={token.telegram || '#'}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className={`p-2 text-center border rounded text-xs transition-colors ${
-                          token.telegram
-                            ? 'border-skull-border hover:border-skull-blood text-skull-text'
-                            : 'border-skull-border/50 text-skull-text-dim cursor-not-allowed'
-                        }`}
-                      >
-                        {token.telegram ? '✓ TELEGRAM' : '✗ TELEGRAM'}
-                      </a>
-                      <a
-                        href={token.website || '#'}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className={`p-2 text-center border rounded text-xs transition-colors ${
-                          token.website
-                            ? 'border-skull-border hover:border-skull-blood text-skull-text'
-                            : 'border-skull-border/50 text-skull-text-dim cursor-not-allowed'
-                        }`}
-                      >
-                        {token.website ? '✓ WEBSITE' : '✗ WEBSITE'}
-                      </a>
-                    </div>
-
                     {/* Quick Links */}
                     <div className="flex gap-2">
                       <a
                         href={`https://pump.fun/${ca}`}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="flex-1 text-center py-2 border border-skull-border rounded hover:border-skull-blood text-skull-text-dim text-xs transition-colors"
+                        className="flex-1 text-center py-3 border border-skull-border rounded hover:border-skull-blood hover:bg-skull-blood/10 text-skull-text text-sm font-medium transition-colors"
                       >
                         PUMP.FUN
                       </a>
@@ -350,17 +310,9 @@ export default function TokenDetails({ ca, onClose }: TokenDetailsProps) {
                         href={`https://dexscreener.com/solana/${ca}`}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="flex-1 text-center py-2 border border-skull-border rounded hover:border-skull-blood text-skull-text-dim text-xs transition-colors"
+                        className="flex-1 text-center py-3 border border-skull-border rounded hover:border-skull-blood hover:bg-skull-blood/10 text-skull-text text-sm font-medium transition-colors"
                       >
                         DEXSCREENER
-                      </a>
-                      <a
-                        href={`https://birdeye.so/token/${ca}?chain=solana`}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="flex-1 text-center py-2 border border-skull-border rounded hover:border-skull-blood text-skull-text-dim text-xs transition-colors"
-                      >
-                        BIRDEYE
                       </a>
                     </div>
                   </div>
