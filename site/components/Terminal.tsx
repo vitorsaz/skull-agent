@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef } from 'react'
 import { motion } from 'framer-motion'
-import { getPumpPortalSocket, LiveToken, TradeUpdate, calculateScore } from '@/lib/pumpportal'
+import { getPumpPortalSocket, LiveToken, TradeUpdate, calculateScore, fetchRecentTokens } from '@/lib/pumpportal'
 import TokenDetails from './TokenDetails'
 
 const SKULL_LOGO_URL = 'https://media.discordapp.net/attachments/1454587961642582039/1459762883562049639/image.png?ex=696475a0&is=69632420&hm=522e0130286a30691dd624369482c5103266686216d3c0945843f54b54de43a4&=&format=webp&quality=lossless'
@@ -38,6 +38,7 @@ export default function Terminal() {
   })
   const logsEndRef = useRef<HTMLDivElement>(null)
   const socketRef = useRef<ReturnType<typeof getPumpPortalSocket> | null>(null)
+  const tokensLoadedRef = useRef(false)
 
   useEffect(() => {
     // Connect to PumpPortal WebSocket
@@ -47,6 +48,8 @@ export default function Terminal() {
     socket.onStatus(setWsStatus)
 
     socket.onToken((token) => {
+      tokensLoadedRef.current = true
+
       // Add to tokens list
       setTokens(prev => {
         const exists = prev.find(t => t.mint === token.mint)
@@ -123,8 +126,81 @@ export default function Terminal() {
 
     socket.connect()
 
+    // Fallback: If no tokens after 10 seconds, fetch from API
+    const fallbackTimeout = setTimeout(async () => {
+      if (!tokensLoadedRef.current) {
+        console.log('[SKULL] No tokens from WebSocket, fetching from API...')
+        const recentTokens = await fetchRecentTokens()
+        if (recentTokens.length > 0) {
+          console.log(`[SKULL] Loaded ${recentTokens.length} tokens from API`)
+          setTokens(recentTokens)
+          recentTokens.forEach(token => {
+            const logEntry: LogEntry = {
+              id: `${token.mint}-${Date.now()}`,
+              action: 'DETECTED',
+              ca: token.mint,
+              name: token.name,
+              symbol: token.symbol,
+              mcap: token.marketCapUsd || 0,
+              score: token.score || 50,
+              status: token.status || 'SCANNING',
+              timestamp: token.timestamp
+            }
+            setLogs(prev => [...prev, logEntry])
+          })
+          setStats(prev => ({
+            ...prev,
+            tokensScanned: recentTokens.length,
+            excellent: recentTokens.filter(t => t.status === 'EXCELLENT').length,
+            good: recentTokens.filter(t => t.status === 'GOOD').length,
+            risky: recentTokens.filter(t => t.status === 'RISKY').length,
+            avoid: recentTokens.filter(t => t.status === 'AVOID').length
+          }))
+        }
+      }
+    }, 10000)
+
+    // Refresh tokens from API every 30 seconds as backup
+    const refreshInterval = setInterval(async () => {
+      const recentTokens = await fetchRecentTokens()
+      if (recentTokens.length > 0) {
+        setTokens(prev => {
+          const newTokens = recentTokens.filter(t => !prev.find(p => p.mint === t.mint))
+          if (newTokens.length > 0) {
+            console.log(`[SKULL] Found ${newTokens.length} new tokens from API`)
+            newTokens.forEach(token => {
+              const logEntry: LogEntry = {
+                id: `${token.mint}-${Date.now()}`,
+                action: 'DETECTED',
+                ca: token.mint,
+                name: token.name,
+                symbol: token.symbol,
+                mcap: token.marketCapUsd || 0,
+                score: token.score || 50,
+                status: token.status || 'SCANNING',
+                timestamp: token.timestamp
+              }
+              setLogs(prevLogs => [logEntry, ...prevLogs.slice(0, 199)])
+              setStats(prevStats => ({
+                ...prevStats,
+                tokensScanned: prevStats.tokensScanned + 1,
+                excellent: prevStats.excellent + (token.status === 'EXCELLENT' ? 1 : 0),
+                good: prevStats.good + (token.status === 'GOOD' ? 1 : 0),
+                risky: prevStats.risky + (token.status === 'RISKY' ? 1 : 0),
+                avoid: prevStats.avoid + (token.status === 'AVOID' ? 1 : 0)
+              }))
+            })
+            return [...newTokens, ...prev.slice(0, 99 - newTokens.length)]
+          }
+          return prev
+        })
+      }
+    }, 30000)
+
     return () => {
       socket.disconnect()
+      clearTimeout(fallbackTimeout)
+      clearInterval(refreshInterval)
     }
   }, [])
 
@@ -422,36 +498,40 @@ export default function Terminal() {
                         key={log.id}
                         initial={{ opacity: 0, x: -10 }}
                         animate={{ opacity: 1, x: 0 }}
-                        className="flex gap-2 items-center hover:bg-skull-border/20 px-1 py-0.5 rounded group"
+                        className="hover:bg-skull-border/20 px-1 py-1 rounded"
                       >
-                        <span className="text-skull-text-dim">{formatTime(log.timestamp)}</span>
-                        <span className={getActionColor(log.action)}>{getActionEmoji(log.action)}</span>
-                        <span className={getActionColor(log.action)}>{log.action}</span>
-                        <span
-                          className="text-skull-text-bright cursor-pointer hover:underline"
-                          onClick={() => setSelectedCA(log.ca)}
-                        >
-                          {log.symbol}
-                        </span>
-                        <span className="text-skull-text-dim truncate max-w-[80px]">{log.name}</span>
-                        <span className={log.action === 'BUY' ? 'text-green-500' : log.action === 'SELL' ? 'text-skull-blood' : 'text-skull-text-dim'}>
-                          {formatMcap(log.mcap)}
-                        </span>
-                        {log.action === 'DETECTED' && (
-                          <span className={`${getStatusColor(log.status).split(' ')[0]}`}>
-                            [{log.score}] {log.status}
+                        <div className="flex gap-2 items-center">
+                          <span className="text-skull-text-dim text-[10px]">{formatTime(log.timestamp)}</span>
+                          <span className={getActionColor(log.action)}>{getActionEmoji(log.action)}</span>
+                          <span className={getActionColor(log.action)}>{log.action}</span>
+                          <span
+                            className="text-skull-text-bright cursor-pointer hover:underline"
+                            onClick={() => setSelectedCA(log.ca)}
+                          >
+                            {log.symbol}
                           </span>
-                        )}
-                        <button
+                          <span className="text-skull-text-dim truncate max-w-[60px]">{log.name}</span>
+                          <span className={log.action === 'BUY' ? 'text-green-500' : log.action === 'SELL' ? 'text-skull-blood' : 'text-skull-text-dim'}>
+                            {formatMcap(log.mcap)}
+                          </span>
+                          {log.action === 'DETECTED' && (
+                            <span className={`${getStatusColor(log.status).split(' ')[0]}`}>
+                              [{log.score}] {log.status}
+                            </span>
+                          )}
+                        </div>
+                        <div
                           onClick={(e) => copyToClipboard(log.ca, e)}
-                          className={`ml-auto px-1.5 py-0.5 text-[8px] border rounded opacity-0 group-hover:opacity-100 transition-all ${
+                          className={`mt-1 px-2 py-0.5 border rounded cursor-pointer transition-all text-center ${
                             copiedCA === log.ca
-                              ? 'bg-green-500/20 border-green-500 text-green-500 opacity-100'
+                              ? 'bg-green-500/20 border-green-500 text-green-500'
                               : 'border-skull-border text-skull-text-dim hover:border-skull-blood hover:text-skull-blood'
                           }`}
                         >
-                          {copiedCA === log.ca ? 'COPIED!' : 'COPY'}
-                        </button>
+                          <span className="text-[9px] font-mono">
+                            {copiedCA === log.ca ? 'COPIED!' : log.ca}
+                          </span>
+                        </div>
                       </motion.div>
                     ))
                   )}
@@ -504,21 +584,23 @@ export default function Terminal() {
                               </div>
                             </div>
                           </div>
-                          <div className="flex items-center gap-2 mt-2">
-                            <span className="text-skull-text-dim text-[10px] font-mono truncate flex-1">
+                          <div
+                          onClick={(e) => copyToClipboard(token.mint, e)}
+                          className={`mt-2 px-2 py-1 border rounded cursor-pointer transition-all ${
+                            copiedCA === token.mint
+                              ? 'bg-green-500/20 border-green-500'
+                              : 'border-skull-border hover:border-skull-blood hover:bg-skull-blood/10'
+                          }`}
+                        >
+                          <div className="flex items-center justify-between">
+                            <span className={`text-[10px] font-mono ${copiedCA === token.mint ? 'text-green-500' : 'text-skull-text-dim'}`}>
                               {token.mint}
                             </span>
-                            <button
-                              onClick={(e) => copyToClipboard(token.mint, e)}
-                              className={`px-2 py-0.5 text-[9px] border rounded transition-all ${
-                                copiedCA === token.mint
-                                  ? 'bg-green-500/20 border-green-500 text-green-500'
-                                  : 'border-skull-border text-skull-text-dim hover:border-skull-blood hover:text-skull-blood'
-                              }`}
-                            >
-                              {copiedCA === token.mint ? 'COPIED!' : 'COPY CA'}
-                            </button>
+                            <span className={`text-[9px] ml-2 ${copiedCA === token.mint ? 'text-green-500' : 'text-skull-text-dim'}`}>
+                              {copiedCA === token.mint ? 'COPIED!' : 'CLICK TO COPY'}
+                            </span>
                           </div>
+                        </div>
                           <div className="flex gap-4 mt-2 text-[10px] text-skull-text-dim">
                             <span>Initial: {(token.initialBuy / 1e9).toFixed(2)} SOL</span>
                             <span>Liq: {(token.vSolInBondingCurve / 1e9).toFixed(2)} SOL</span>
@@ -563,34 +645,35 @@ export default function Terminal() {
 
                   <div className="border-t border-skull-border pt-4">
                     <h4 className="text-skull-text-dim text-xs mb-2">RECENT DETECTIONS</h4>
-                    <div className="space-y-1">
+                    <div className="space-y-2">
                       {tokens.slice(0, 8).map((token) => (
                         <div
                           key={token.mint}
-                          className="flex items-center justify-between p-2 border border-skull-border rounded hover:border-skull-blood/50 transition-colors group"
+                          className="p-2 border border-skull-border rounded hover:border-skull-blood/50 transition-colors"
                         >
-                          <div className="flex items-center gap-2">
-                            <div className={`w-1.5 h-1.5 rounded-full ${getScoreIndicator(token.score || 50).color}`} />
-                            <span
-                              className="text-skull-text text-xs cursor-pointer hover:underline"
-                              onClick={() => setSelectedCA(token.mint)}
-                            >
-                              {token.symbol}
-                            </span>
-                            <span className="text-skull-text-dim text-[10px]">{token.mint?.slice(0, 6)}...{token.mint?.slice(-4)}</span>
-                          </div>
-                          <div className="flex items-center gap-2">
+                          <div className="flex items-center justify-between mb-2">
+                            <div className="flex items-center gap-2">
+                              <div className={`w-1.5 h-1.5 rounded-full ${getScoreIndicator(token.score || 50).color}`} />
+                              <span
+                                className="text-skull-text text-xs cursor-pointer hover:underline"
+                                onClick={() => setSelectedCA(token.mint)}
+                              >
+                                {token.symbol}
+                              </span>
+                            </div>
                             <span className="text-skull-text-dim text-xs">{formatMcap(token.marketCapUsd || 0)}</span>
-                            <button
-                              onClick={(e) => copyToClipboard(token.mint, e)}
-                              className={`px-1.5 py-0.5 text-[9px] border rounded transition-all ${
-                                copiedCA === token.mint
-                                  ? 'bg-green-500/20 border-green-500 text-green-500'
-                                  : 'border-skull-border text-skull-text-dim hover:border-skull-blood hover:text-skull-blood'
-                              }`}
-                            >
-                              {copiedCA === token.mint ? 'COPIED!' : 'COPY'}
-                            </button>
+                          </div>
+                          <div
+                            onClick={(e) => copyToClipboard(token.mint, e)}
+                            className={`px-2 py-1 border rounded cursor-pointer transition-all text-center ${
+                              copiedCA === token.mint
+                                ? 'bg-green-500/20 border-green-500 text-green-500'
+                                : 'border-skull-border text-skull-text-dim hover:border-skull-blood hover:text-skull-blood'
+                            }`}
+                          >
+                            <span className="text-[9px] font-mono">
+                              {copiedCA === token.mint ? 'COPIED!' : token.mint}
+                            </span>
                           </div>
                         </div>
                       ))}

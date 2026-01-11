@@ -190,6 +190,7 @@ export class PumpPortalSocket {
   private onStatusCallback: ((status: 'connected' | 'disconnected' | 'connecting') => void) | null = null
   private pingInterval: ReturnType<typeof setInterval> | null = null
   private isConnecting = false
+  private connectionTimeout: ReturnType<typeof setTimeout> | null = null
 
   connect() {
     if (this.ws?.readyState === WebSocket.OPEN || this.isConnecting) return
@@ -201,11 +202,34 @@ export class PumpPortalSocket {
     updateSolPrice()
 
     try {
-      console.log('[SKULL] Connecting to PumpPortal...')
+      console.log('[SKULL] Connecting to PumpPortal WebSocket...')
+
+      // Clear any existing connection timeout
+      if (this.connectionTimeout) {
+        clearTimeout(this.connectionTimeout)
+      }
+
       this.ws = new WebSocket('wss://pumpportal.fun/api/data')
 
+      // Set connection timeout - if not connected in 10 seconds, retry
+      this.connectionTimeout = setTimeout(() => {
+        if (this.ws?.readyState !== WebSocket.OPEN) {
+          console.log('[SKULL] Connection timeout, retrying...')
+          this.ws?.close()
+          this.isConnecting = false
+          this.attemptReconnect()
+        }
+      }, 10000)
+
       this.ws.onopen = () => {
-        console.log('[SKULL] Connected to PumpPortal WebSocket')
+        console.log('[SKULL] Connected to PumpPortal WebSocket!')
+
+        // Clear connection timeout
+        if (this.connectionTimeout) {
+          clearTimeout(this.connectionTimeout)
+          this.connectionTimeout = null
+        }
+
         this.isConnecting = false
         this.reconnectAttempts = 0
         this.onStatusCallback?.('connected')
@@ -413,6 +437,10 @@ export class PumpPortalSocket {
 
   disconnect() {
     this.clearPing()
+    if (this.connectionTimeout) {
+      clearTimeout(this.connectionTimeout)
+      this.connectionTimeout = null
+    }
     if (this.ws) {
       this.ws.close()
       this.ws = null
@@ -434,4 +462,59 @@ export function getPumpPortalSocket(): PumpPortalSocket {
     socketInstance = new PumpPortalSocket()
   }
   return socketInstance
+}
+
+// Fallback: Fetch recent tokens from API
+export async function fetchRecentTokens(): Promise<LiveToken[]> {
+  try {
+    const response = await fetch('https://frontend-api.pump.fun/coins?offset=0&limit=20&sort=created_timestamp&order=DESC&includeNsfw=false', {
+      headers: {
+        'Accept': 'application/json',
+        'User-Agent': 'Mozilla/5.0'
+      }
+    })
+
+    if (!response.ok) {
+      console.log('[SKULL] Fallback API failed:', response.status)
+      return []
+    }
+
+    const data = await response.json()
+
+    if (!Array.isArray(data)) {
+      console.log('[SKULL] Invalid API response')
+      return []
+    }
+
+    return data.map((coin: any) => {
+      const mcapSol = coin.usd_market_cap ? coin.usd_market_cap / SOL_PRICE_USD : 0
+      const token: LiveToken = {
+        signature: '',
+        mint: coin.mint || '',
+        traderPublicKey: coin.creator || '',
+        txType: 'create',
+        initialBuy: 0,
+        bondingCurveKey: coin.bonding_curve || '',
+        vTokensInBondingCurve: 0,
+        vSolInBondingCurve: 0,
+        marketCapSol: mcapSol,
+        name: coin.name || 'Unknown',
+        symbol: coin.symbol || '???',
+        uri: coin.metadata_uri || '',
+        timestamp: coin.created_timestamp || Date.now(),
+        marketCapUsd: coin.usd_market_cap || 0,
+        logo: coin.image_uri || undefined
+      }
+
+      const { score, status, narrative } = calculateScore(token)
+      token.score = score
+      token.status = status
+      token.narrativeMatch = narrative
+
+      return token
+    })
+  } catch (err) {
+    console.error('[SKULL] Fallback fetch error:', err)
+    return []
+  }
 }
