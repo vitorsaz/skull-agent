@@ -895,12 +895,30 @@ export default function Terminal() {
         </motion.div>
 
         {/* Footer */}
-        <div className="mt-4 text-center text-[10px] text-skull-text-dim">
-          <span>SKULL AGENT v3.0</span>
-          <span className="mx-2">|</span>
-          <span>darkweb edition</span>
-          <span className="mx-2">|</span>
-          <span className="text-skull-blood">hunt or be hunted</span>
+        <div className="mt-4 text-center">
+          <div className="flex items-center justify-center gap-4 mb-2">
+            <a
+              href="https://x.com/SkullAgent_"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex items-center gap-2 px-4 py-2 bg-skull-border/50 border border-skull-border rounded-lg hover:border-skull-blood hover:bg-skull-blood/10 transition-all group"
+            >
+              <svg
+                viewBox="0 0 24 24"
+                className="w-4 h-4 fill-skull-text group-hover:fill-skull-blood transition-colors"
+              >
+                <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/>
+              </svg>
+              <span className="text-skull-text text-xs font-medium group-hover:text-skull-blood transition-colors">@SkullAgent_</span>
+            </a>
+          </div>
+          <div className="text-[10px] text-skull-text-dim">
+            <span>SKULL AGENT v3.0</span>
+            <span className="mx-2">|</span>
+            <span>darkweb edition</span>
+            <span className="mx-2">|</span>
+            <span className="text-skull-blood">hunt or be hunted</span>
+          </div>
         </div>
       </div>
     </div>
