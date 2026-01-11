@@ -15,15 +15,7 @@ import {
 } from '@/lib/supabase'
 import TokenDetails from './TokenDetails'
 
-const SKULL_HEADER = `
- ░██████╗██╗░░██╗██╗░░░██╗██╗░░░░░██╗░░░░░
- ██╔════╝██║░██╔╝██║░░░██║██║░░░░░██║░░░░░
- ╚█████╗░█████═╝░██║░░░██║██║░░░░░██║░░░░░
- ░╚═══██╗██╔═██╗░██║░░░██║██║░░░░░██║░░░░░
- ██████╔╝██║░╚██╗╚██████╔╝███████╗███████╗
- ╚═════╝░╚═╝░░╚═╝░╚═════╝░╚══════╝╚══════╝
-          ▄︻̷̿┻̿═━一  AGENT
-`
+const SKULL_LOGO_URL = 'https://media.discordapp.net/attachments/1454587961642582039/1459763303877312733/fdf384eb-e0ae-47a5-bfe2-1791f62166ab.png?ex=69647604&is=69632484&hm=c6bd67af74990c793e69d7b720c26ef6410b2b089929fdb546a768368a7858b9&=&format=webp&quality=lossless&width=1008&height=1008'
 
 export default function Terminal() {
   const [status, setStatus] = useState<SystemStatus | null>(null)
@@ -37,12 +29,10 @@ export default function Terminal() {
   const logsEndRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
-    // Initial fetch
     getSystemStatus().then(setStatus)
     getRecentTokens(50).then(setTokens)
     getSniperLogs(100).then(setLogs)
 
-    // Realtime subscriptions
     const statusSub = subscribeToStatus(setStatus)
     const tokensSub = subscribeToTokens((token) => {
       setTokens(prev => {
@@ -80,31 +70,33 @@ export default function Terminal() {
     switch (cmd) {
       case 'help':
         response = `
-Available commands:
-  status    - Show system status
-  tokens    - Show recent tokens
-  logs      - Show sniper logs
-  clear     - Clear command history
-  about     - About SKULL AGENT
+[COMMANDS]
+  status    - system status
+  tokens    - recent targets
+  logs      - activity logs
+  clear     - clear terminal
+  about     - about skull agent
 `
         break
       case 'status':
         response = status ? `
-System Status: ${status.status}
-Wallet: ${status.wallet_address || 'Not connected'}
-Balance: ${status.balance_sol?.toFixed(4) || 0} SOL
-Sniper: ${status.sniper_enabled ? 'ENABLED' : 'DISABLED'}
-Tokens Scanned: ${status.tokens_scanned || 0}
-Snipes Executed: ${status.snipes_executed || 0}
-Kills: ${status.kills || 0}
-Deaths: ${status.deaths || 0}
-` : 'Status unavailable'
+[SYSTEM STATUS]
+  Status: ${status.status}
+  Wallet: ${status.wallet_address ? status.wallet_address.slice(0, 8) + '...' : 'disconnected'}
+  Balance: ${status.balance_sol?.toFixed(4) || 0} SOL
+  Sniper: ${status.sniper_enabled ? 'ARMED' : 'SAFE'}
+  Scanned: ${status.tokens_scanned || 0}
+  Executed: ${status.snipes_executed || 0}
+  K/D: ${status.kills || 0}/${status.deaths || 0}
+` : '[ERROR] status unavailable'
         break
       case 'about':
         response = `
-SKULL AGENT v2.0
-Autonomous sniper for PumpFun tokens
-Hunt or be hunted.
+[SKULL AGENT v2.0]
+  autonomous sniper for pump.fun
+  darkweb edition
+
+  hunt or be hunted.
 `
         break
       case 'clear':
@@ -112,7 +104,7 @@ Hunt or be hunted.
         setCommandInput('')
         return
       default:
-        response = `Unknown command: ${cmd}. Type 'help' for available commands.`
+        response = `[ERROR] unknown command: ${cmd}`
     }
 
     setCommandHistory(prev => [...prev, `> ${commandInput}`, response])
@@ -138,63 +130,62 @@ Hunt or be hunted.
   const formatMcap = (value: number) => {
     if (!value) return '$0'
     if (value >= 1_000_000) return `$${(value / 1_000_000).toFixed(2)}M`
-    if (value >= 1_000) return `$${(value / 1_000).toFixed(2)}K`
-    return `$${value.toFixed(2)}`
+    if (value >= 1_000) return `$${(value / 1_000).toFixed(1)}K`
+    return `$${value.toFixed(0)}`
   }
 
   const getActionColor = (action: string) => {
     switch (action) {
-      case 'DETECTED': return 'text-yellow-500'
-      case 'APPROVED': return 'text-skull-green'
-      case 'REJECTED': return 'text-gray-500'
-      case 'SNIPING': return 'text-orange-500'
-      case 'SNIPE_SUCCESS': return 'text-skull-green skull-glow'
-      case 'SNIPE_FAILED': return 'text-skull-blood'
-      case 'TAKE_PROFIT': return 'text-green-400'
-      case 'STOP_LOSS': return 'text-red-500'
-      default: return 'text-skull-green'
+      case 'DETECTED': return 'text-skull-text'
+      case 'APPROVED': return 'text-skull-text-bright'
+      case 'REJECTED': return 'text-skull-text-dim'
+      case 'SNIPING': return 'text-skull-blood'
+      case 'SNIPE_SUCCESS': return 'text-skull-blood-bright blood-glow-subtle'
+      case 'SNIPE_FAILED': return 'text-red-900'
+      case 'TAKE_PROFIT': return 'text-skull-text-bright'
+      case 'STOP_LOSS': return 'text-red-800'
+      default: return 'text-skull-text'
     }
   }
 
-  const getStatusColor = (status: string) => {
-    switch (status?.toLowerCase()) {
-      case 'excellent': return 'text-green-400 border-green-400'
-      case 'good': return 'text-yellow-400 border-yellow-400'
-      case 'approved': return 'text-skull-green border-skull-green'
-      case 'sniped': return 'text-purple-400 border-purple-400'
-      case 'scanning': return 'text-blue-400 border-blue-400'
-      case 'risky': return 'text-orange-400 border-orange-400'
+  const getStatusColor = (tokenStatus: string) => {
+    switch (tokenStatus?.toLowerCase()) {
+      case 'excellent':
+      case 'good':
+      case 'approved':
+      case 'sniped': return 'text-skull-text-bright border-skull-text-dim'
+      case 'scanning': return 'text-skull-text border-skull-border'
+      case 'risky':
       case 'avoid':
       case 'rejected': return 'text-skull-blood border-skull-blood'
-      default: return 'text-gray-500 border-gray-500'
+      default: return 'text-skull-text-dim border-skull-border'
     }
   }
 
   const getScoreIndicator = (score: number) => {
-    if (score >= 80) return { color: 'bg-green-500', label: 'EXCELLENT' }
-    if (score >= 65) return { color: 'bg-yellow-500', label: 'GOOD' }
-    if (score >= 50) return { color: 'bg-orange-500', label: 'RISKY' }
-    return { color: 'bg-red-500', label: 'AVOID' }
+    if (score >= 80) return { color: 'bg-skull-text-bright', label: 'A' }
+    if (score >= 65) return { color: 'bg-skull-text', label: 'B' }
+    if (score >= 50) return { color: 'bg-skull-blood', label: 'C' }
+    return { color: 'bg-red-900', label: 'D' }
   }
 
   return (
-    <div className="min-h-screen bg-skull-black p-2 md:p-4">
+    <div className="min-h-screen bg-void p-2 md:p-4 noise">
       {/* Blood drips */}
       {Array.from({ length: 10 }).map((_, i) => (
-        <div
-          key={i}
-          className="blood-drip"
-          style={{ left: `${5 + i * 10}%`, animationDelay: `${i * 0.3}s` }}
-        />
+        <div key={i} className="blood-drip" />
       ))}
+
+      {/* Vignette */}
+      <div className="vignette" />
 
       {/* Token Details Modal */}
       {selectedCA && (
         <TokenDetails ca={selectedCA} onClose={() => setSelectedCA(null)} />
       )}
 
-      <div className="max-w-7xl mx-auto">
-        {/* Header */}
+      <div className="max-w-7xl mx-auto relative z-10">
+        {/* Header with Logo */}
         <motion.div
           initial={{ opacity: 0, y: -20 }}
           animate={{ opacity: 1, y: 0 }}
@@ -202,53 +193,66 @@ Hunt or be hunted.
         >
           <div className="terminal-header p-2 flex items-center gap-2">
             <div className="flex gap-1.5">
-              <div className="w-3 h-3 rounded-full bg-skull-blood" />
-              <div className="w-3 h-3 rounded-full bg-yellow-500" />
-              <div className="w-3 h-3 rounded-full bg-skull-green" />
+              <div className="w-2.5 h-2.5 rounded-full bg-skull-blood" />
+              <div className="w-2.5 h-2.5 rounded-full bg-skull-text-dim" />
+              <div className="w-2.5 h-2.5 rounded-full bg-skull-text-dim" />
             </div>
-            <span className="text-skull-green text-sm ml-2">skull-agent@pump.fun</span>
+            <span className="text-skull-text-dim text-xs ml-2">skull-agent@darkweb</span>
           </div>
-          <div className="p-4">
-            <pre className="text-skull-green text-xs md:text-sm skull-glow leading-tight">
-              {SKULL_HEADER}
-            </pre>
+
+          <div className="p-6">
+            {/* Logo and Title */}
+            <div className="flex items-center justify-center gap-6 mb-6">
+              <img
+                src={SKULL_LOGO_URL}
+                alt="SKULL AGENT"
+                className="w-24 h-24 md:w-32 md:h-32 rounded-lg opacity-90"
+              />
+              <div>
+                <h1 className="text-2xl md:text-4xl font-bold text-skull-text-bright tracking-wider">
+                  SKULL AGENT
+                </h1>
+                <p className="text-skull-blood text-sm md:text-base tracking-[0.3em] mt-1">
+                  AUTONOMOUS SNIPER
+                </p>
+                <p className="text-skull-text-dim text-xs mt-2">
+                  pump.fun darkweb terminal
+                </p>
+              </div>
+            </div>
 
             {/* Status bar */}
-            <div className="mt-4 flex flex-wrap gap-4 text-xs md:text-sm border-t border-skull-green/30 pt-4">
+            <div className="flex flex-wrap justify-center gap-6 text-xs border-t border-skull-border pt-4">
               <div className="flex items-center gap-2">
-                <span className="text-gray-500">STATUS:</span>
-                <span className={status?.status === 'HUNTING' ? 'status-online' : 'status-offline'}>
+                <span className="text-skull-text-dim">STATUS</span>
+                <span className={status?.status === 'HUNTING' ? 'text-skull-blood' : 'text-skull-text-dim'}>
                   {status?.status || 'OFFLINE'}
                 </span>
                 <motion.span
-                  className={status?.status === 'HUNTING' ? 'text-skull-green' : 'text-skull-blood'}
+                  className="text-skull-blood text-[8px]"
                   animate={{ opacity: [1, 0.3, 1] }}
-                  transition={{ duration: 1, repeat: Infinity }}
+                  transition={{ duration: 1.5, repeat: Infinity }}
                 >
-                  ●
+                  {status?.status === 'HUNTING' ? '●' : '○'}
                 </motion.span>
               </div>
               <div className="flex items-center gap-2">
-                <span className="text-gray-500">BALANCE:</span>
-                <span className="text-skull-green">{status?.balance_sol?.toFixed(4) || '0.0000'} SOL</span>
+                <span className="text-skull-text-dim">BAL</span>
+                <span className="text-skull-text">{status?.balance_sol?.toFixed(4) || '0.0000'}</span>
               </div>
               <div className="flex items-center gap-2">
-                <span className="text-gray-500">SNIPER:</span>
-                <span className={status?.sniper_enabled ? 'text-skull-green' : 'text-skull-blood'}>
+                <span className="text-skull-text-dim">SNIPER</span>
+                <span className={status?.sniper_enabled ? 'text-skull-blood' : 'text-skull-text-dim'}>
                   {status?.sniper_enabled ? 'ARMED' : 'SAFE'}
                 </span>
               </div>
               <div className="flex items-center gap-2">
-                <span className="text-gray-500">SCANNED:</span>
-                <span className="text-skull-green">{status?.tokens_scanned || 0}</span>
+                <span className="text-skull-text-dim">SCAN</span>
+                <span className="text-skull-text">{status?.tokens_scanned || 0}</span>
               </div>
               <div className="flex items-center gap-2">
-                <span className="text-gray-500">KILLS:</span>
-                <span className="text-green-400">{status?.kills || 0}</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <span className="text-gray-500">DEATHS:</span>
-                <span className="text-skull-blood">{status?.deaths || 0}</span>
+                <span className="text-skull-text-dim">K/D</span>
+                <span className="text-skull-text">{status?.kills || 0}/{status?.deaths || 0}</span>
               </div>
             </div>
           </div>
@@ -256,7 +260,7 @@ Hunt or be hunted.
 
         {/* Main content */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-          {/* Left panel - Live Feed */}
+          {/* Left panel */}
           <motion.div
             initial={{ opacity: 0, x: -20 }}
             animate={{ opacity: 1, x: 0 }}
@@ -264,60 +268,49 @@ Hunt or be hunted.
           >
             <div className="terminal-header p-2 flex items-center justify-between">
               <div className="flex gap-1">
-                <button
-                  onClick={() => setActiveTab('feed')}
-                  className={`px-3 py-1 text-xs rounded ${activeTab === 'feed' ? 'bg-skull-green/20 text-skull-green' : 'text-gray-500 hover:text-gray-300'}`}
-                >
-                  LIVE FEED
-                </button>
-                <button
-                  onClick={() => setActiveTab('tokens')}
-                  className={`px-3 py-1 text-xs rounded ${activeTab === 'tokens' ? 'bg-skull-green/20 text-skull-green' : 'text-gray-500 hover:text-gray-300'}`}
-                >
-                  TOKENS
-                </button>
-                <button
-                  onClick={() => setActiveTab('ca')}
-                  className={`px-3 py-1 text-xs rounded ${activeTab === 'ca' ? 'bg-skull-blood/20 text-skull-blood' : 'text-gray-500 hover:text-gray-300'}`}
-                >
-                  CA LOOKUP
-                </button>
-                <button
-                  onClick={() => setActiveTab('logs')}
-                  className={`px-3 py-1 text-xs rounded ${activeTab === 'logs' ? 'bg-skull-green/20 text-skull-green' : 'text-gray-500 hover:text-gray-300'}`}
-                >
-                  LOGS
-                </button>
+                {['feed', 'tokens', 'ca', 'logs'].map((tab) => (
+                  <button
+                    key={tab}
+                    onClick={() => setActiveTab(tab as any)}
+                    className={`px-3 py-1 text-xs rounded transition-colors ${
+                      activeTab === tab
+                        ? 'tab-active'
+                        : 'tab-inactive'
+                    }`}
+                  >
+                    {tab === 'ca' ? 'CA' : tab.toUpperCase()}
+                  </button>
+                ))}
               </div>
-              <span className="text-skull-green text-xs">
+              <span className="text-skull-text-dim text-xs">
                 {tokens.length} targets
               </span>
             </div>
 
-            <div className="h-96 overflow-y-auto p-4 font-mono text-xs md:text-sm">
-              {/* LIVE FEED TAB */}
+            <div className="h-96 overflow-y-auto p-4 font-mono text-xs">
+              {/* LIVE FEED */}
               {activeTab === 'feed' && (
                 <div className="space-y-1">
                   {logs.slice(0, 50).map((log, i) => (
                     <motion.div
                       key={log.id || i}
-                      initial={{ opacity: 0, x: -10 }}
+                      initial={{ opacity: 0, x: -5 }}
                       animate={{ opacity: 1, x: 0 }}
-                      className="flex gap-2 hover:bg-skull-green/5 px-1 rounded cursor-pointer"
+                      className="flex gap-2 hover:bg-skull-border/20 px-1 py-0.5 rounded cursor-pointer"
                       onClick={() => log.ca && setSelectedCA(log.ca)}
                     >
-                      <span className="text-gray-600">[{formatTime(log.timestamp)}]</span>
-                      <span className={getActionColor(log.action)}>[{log.action}]</span>
-                      <span className="text-skull-green">{log.symbol || '???'}</span>
-                      {log.mcap && <span className="text-gray-500">MC:{formatMcap(log.mcap)}</span>}
+                      <span className="text-skull-text-dim">{formatTime(log.timestamp)}</span>
+                      <span className={getActionColor(log.action)}>{log.action}</span>
+                      <span className="text-skull-text">{log.symbol || '???'}</span>
+                      {log.mcap && <span className="text-skull-text-dim">{formatMcap(log.mcap)}</span>}
                       {log.score && (
-                        <span className={`${log.score >= 65 ? 'text-green-400' : log.score >= 50 ? 'text-yellow-500' : 'text-skull-blood'}`}>
-                          S:{log.score}
+                        <span className={log.score >= 65 ? 'text-skull-text-bright' : 'text-skull-blood'}>
+                          [{log.score}]
                         </span>
                       )}
                       {log.pnl_percent !== null && log.pnl_percent !== undefined && (
-                        <span className={log.pnl_percent >= 0 ? 'text-green-400' : 'text-skull-blood'}>
-                          {log.pnl_percent >= 0 ? '+' : ''}{log.pnl_percent.toFixed(2)}%
+                        <span className={log.pnl_percent >= 0 ? 'text-skull-text-bright' : 'text-skull-blood'}>
+                          {log.pnl_percent >= 0 ? '+' : ''}{log.pnl_percent.toFixed(1)}%
                         </span>
                       )}
                     </motion.div>
@@ -326,7 +319,7 @@ Hunt or be hunted.
                 </div>
               )}
 
-              {/* TOKENS TAB */}
+              {/* TOKENS */}
               {activeTab === 'tokens' && (
                 <div className="space-y-2">
                   {tokens.map((token, i) => {
@@ -340,36 +333,36 @@ Hunt or be hunted.
                         onClick={() => setSelectedCA(token.ca)}
                       >
                         <div className="flex justify-between items-start">
-                          <div className="flex items-center gap-2">
-                            {token.logo && (
-                              <img src={token.logo} alt="" className="w-8 h-8 rounded" />
+                          <div className="flex items-center gap-3">
+                            {token.logo ? (
+                              <img src={token.logo} alt="" className="w-8 h-8 rounded opacity-80" />
+                            ) : (
+                              <div className="w-8 h-8 rounded bg-skull-border flex items-center justify-center text-skull-text-dim text-xs">
+                                ?
+                              </div>
                             )}
                             <div>
                               <div className="flex items-center gap-2">
-                                <span className="text-skull-green font-bold">{token.simbolo}</span>
-                                <span className={`text-xs px-1 border rounded ${getStatusColor(token.status)}`}>
+                                <span className="text-skull-text-bright font-medium">{token.simbolo}</span>
+                                <span className={`text-[10px] px-1.5 py-0.5 border rounded ${getStatusColor(token.status)}`}>
                                   {token.status?.toUpperCase()}
                                 </span>
                               </div>
-                              <span className="text-gray-500 text-xs">{token.nome?.slice(0, 25)}</span>
+                              <span className="text-skull-text-dim text-xs">{token.nome?.slice(0, 20)}</span>
                             </div>
                           </div>
                           <div className="text-right">
-                            <div className="text-skull-green">{formatMcap(token.market_cap || 0)}</div>
+                            <div className="text-skull-text">{formatMcap(token.market_cap || 0)}</div>
                             {token.score > 0 && (
-                              <div className="flex items-center gap-1 justify-end">
-                                <div className={`w-2 h-2 rounded-full ${scoreInfo.color}`} />
-                                <span className="text-xs text-gray-500">{token.score}/100</span>
+                              <div className="flex items-center gap-1 justify-end mt-1">
+                                <div className={`w-1.5 h-1.5 rounded-full ${scoreInfo.color}`} />
+                                <span className="text-skull-text-dim text-[10px]">{token.score}</span>
                               </div>
                             )}
                           </div>
                         </div>
-                        <div className="text-gray-600 text-xs mt-2 truncate font-mono">
+                        <div className="text-skull-text-dim text-[10px] mt-2 font-mono truncate">
                           {token.ca}
-                        </div>
-                        <div className="flex gap-4 mt-2 text-xs text-gray-500">
-                          <span>Liq: {formatMcap(token.liquidity || 0)}</span>
-                          <span>Holders: {token.holders || 0}</span>
                         </div>
                       </motion.div>
                     )
@@ -377,14 +370,18 @@ Hunt or be hunted.
                 </div>
               )}
 
-              {/* CA LOOKUP TAB */}
+              {/* CA LOOKUP */}
               {activeTab === 'ca' && (
                 <div className="space-y-4">
-                  <div className="text-center py-4">
-                    <div className="text-2xl mb-2">🔍</div>
-                    <h3 className="text-skull-green text-lg mb-2">CA Lookup</h3>
-                    <p className="text-gray-500 text-sm mb-4">
-                      Enter a contract address to view token details
+                  <div className="text-center py-6">
+                    <img
+                      src={SKULL_LOGO_URL}
+                      alt="CA Lookup"
+                      className="w-16 h-16 mx-auto mb-4 opacity-60"
+                    />
+                    <h3 className="text-skull-text-bright text-sm mb-1">CONTRACT LOOKUP</h3>
+                    <p className="text-skull-text-dim text-xs">
+                      enter contract address
                     </p>
                   </div>
 
@@ -393,32 +390,32 @@ Hunt or be hunted.
                       type="text"
                       value={caInput}
                       onChange={(e) => setCaInput(e.target.value)}
-                      placeholder="Enter contract address..."
-                      className="flex-1 bg-skull-dark border border-skull-green/30 rounded px-3 py-2 text-skull-green font-mono text-sm focus:outline-none focus:border-skull-green"
+                      placeholder="paste contract address..."
+                      className="flex-1 bg-void border border-skull-border rounded px-3 py-2 text-skull-text font-mono text-xs focus:outline-none focus:border-skull-blood"
                     />
                     <button
                       type="submit"
-                      className="px-4 py-2 bg-skull-green/20 border border-skull-green text-skull-green rounded hover:bg-skull-green/30 transition-colors"
+                      className="px-4 py-2 bg-skull-blood/20 border border-skull-blood text-skull-blood rounded hover:bg-skull-blood/30 text-xs transition-colors"
                     >
-                      Search
+                      SEARCH
                     </button>
                   </form>
 
-                  <div className="border-t border-skull-green/20 pt-4">
-                    <h4 className="text-gray-500 text-sm mb-2">Recent Lookups</h4>
-                    <div className="space-y-2">
+                  <div className="border-t border-skull-border pt-4">
+                    <h4 className="text-skull-text-dim text-xs mb-2">RECENT</h4>
+                    <div className="space-y-1">
                       {tokens.slice(0, 5).map((token, i) => (
                         <div
                           key={i}
                           onClick={() => setSelectedCA(token.ca)}
-                          className="flex items-center justify-between p-2 border border-skull-green/20 rounded hover:border-skull-green/50 cursor-pointer transition-colors"
+                          className="flex items-center justify-between p-2 border border-skull-border rounded hover:border-skull-blood/50 cursor-pointer transition-colors"
                         >
                           <div className="flex items-center gap-2">
-                            <span className={`w-2 h-2 rounded-full ${getScoreIndicator(token.score || 0).color}`} />
-                            <span className="text-skull-green">{token.simbolo}</span>
-                            <span className="text-gray-600 text-xs">{token.ca?.slice(0, 8)}...{token.ca?.slice(-6)}</span>
+                            <div className={`w-1.5 h-1.5 rounded-full ${getScoreIndicator(token.score || 0).color}`} />
+                            <span className="text-skull-text text-xs">{token.simbolo}</span>
+                            <span className="text-skull-text-dim text-[10px]">{token.ca?.slice(0, 6)}...{token.ca?.slice(-4)}</span>
                           </div>
-                          <span className="text-gray-500 text-xs">{formatMcap(token.market_cap || 0)}</span>
+                          <span className="text-skull-text-dim text-xs">{formatMcap(token.market_cap || 0)}</span>
                         </div>
                       ))}
                     </div>
@@ -426,27 +423,27 @@ Hunt or be hunted.
                 </div>
               )}
 
-              {/* LOGS TAB */}
+              {/* LOGS */}
               {activeTab === 'logs' && (
-                <div className="space-y-1">
+                <div className="space-y-0.5">
                   {logs.map((log, i) => (
                     <div
                       key={log.id || i}
-                      className="text-gray-400 hover:bg-skull-green/5 px-1 rounded cursor-pointer"
+                      className="text-skull-text-dim hover:bg-skull-border/20 px-1 py-0.5 rounded cursor-pointer text-[11px]"
                       onClick={() => log.ca && setSelectedCA(log.ca)}
                     >
-                      <span className="text-gray-600">{formatTime(log.timestamp)}</span>
+                      <span className="text-skull-text-dim">{formatTime(log.timestamp)}</span>
                       {' '}<span className={getActionColor(log.action)}>{log.action}</span>
-                      {' '}<span className="text-skull-green">{log.ca?.slice(0, 8)}...</span>
+                      {' '}<span className="text-skull-text">{log.ca?.slice(0, 6)}...</span>
                       {log.tx_signature && (
                         <a
                           href={`https://solscan.io/tx/${log.tx_signature}`}
                           target="_blank"
                           rel="noopener noreferrer"
-                          className="text-blue-400 ml-2"
+                          className="text-skull-blood ml-2"
                           onClick={(e) => e.stopPropagation()}
                         >
-                          TX
+                          [TX]
                         </a>
                       )}
                     </div>
@@ -463,33 +460,33 @@ Hunt or be hunted.
             className="terminal rounded-lg overflow-hidden"
           >
             <div className="terminal-header p-2">
-              <span className="text-skull-green text-xs">COMMAND TERMINAL</span>
+              <span className="text-skull-text-dim text-xs">TERMINAL</span>
             </div>
 
             <div className="h-96 flex flex-col">
-              <div className="flex-1 overflow-y-auto p-4 font-mono text-xs">
-                <div className="text-skull-green mb-4">
-                  Type 'help' for available commands
+              <div className="flex-1 overflow-y-auto p-3 font-mono text-[11px]">
+                <div className="text-skull-text-dim mb-3">
+                  type 'help' for commands
                 </div>
                 {commandHistory.map((line, i) => (
-                  <div key={i} className="text-skull-green whitespace-pre-wrap">
+                  <div key={i} className="text-skull-text whitespace-pre-wrap leading-relaxed">
                     {line}
                   </div>
                 ))}
               </div>
 
-              <form onSubmit={handleCommand} className="p-2 border-t border-skull-green/30">
+              <form onSubmit={handleCommand} className="p-2 border-t border-skull-border">
                 <div className="flex items-center gap-2">
-                  <span className="text-skull-blood">{'>'}</span>
+                  <span className="text-skull-blood">&gt;</span>
                   <input
                     type="text"
                     value={commandInput}
                     onChange={(e) => setCommandInput(e.target.value)}
-                    className="terminal-input flex-1 text-sm"
-                    placeholder="Enter command..."
+                    className="terminal-input flex-1 text-xs"
+                    placeholder=""
                   />
                   <motion.span
-                    className="text-skull-green"
+                    className="text-skull-blood"
                     animate={{ opacity: [1, 0] }}
                     transition={{ duration: 0.5, repeat: Infinity }}
                   >
@@ -507,47 +504,47 @@ Hunt or be hunted.
           animate={{ opacity: 1, y: 0 }}
           className="mt-4 terminal rounded-lg p-4"
         >
-          <div className="grid grid-cols-2 md:grid-cols-5 gap-4 text-center text-xs md:text-sm">
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-4 text-center text-xs">
             <div>
-              <div className="text-gray-500">TOKENS SCANNED</div>
-              <div className="text-skull-green text-xl">{status?.tokens_scanned || 0}</div>
+              <div className="text-skull-text-dim text-[10px]">SCANNED</div>
+              <div className="text-skull-text text-lg">{status?.tokens_scanned || 0}</div>
             </div>
             <div>
-              <div className="text-gray-500">SNIPES EXECUTED</div>
-              <div className="text-yellow-500 text-xl">{status?.snipes_executed || 0}</div>
+              <div className="text-skull-text-dim text-[10px]">EXECUTED</div>
+              <div className="text-skull-blood text-lg">{status?.snipes_executed || 0}</div>
             </div>
             <div>
-              <div className="text-gray-500">KILL RATE</div>
-              <div className="text-green-400 text-xl">
+              <div className="text-skull-text-dim text-[10px]">KILL RATE</div>
+              <div className="text-skull-text-bright text-lg">
                 {status?.kills && status?.snipes_executed
-                  ? ((status.kills / status.snipes_executed) * 100).toFixed(1)
+                  ? ((status.kills / status.snipes_executed) * 100).toFixed(0)
                   : 0}%
               </div>
             </div>
             <div>
-              <div className="text-gray-500">TOTAL PNL</div>
-              <div className={`text-xl ${(status?.total_pnl || 0) >= 0 ? 'text-green-400' : 'text-skull-blood'}`}>
-                {(status?.total_pnl || 0) >= 0 ? '+' : ''}{(status?.total_pnl || 0).toFixed(2)}%
+              <div className="text-skull-text-dim text-[10px]">PNL</div>
+              <div className={`text-lg ${(status?.total_pnl || 0) >= 0 ? 'text-skull-text-bright' : 'text-skull-blood'}`}>
+                {(status?.total_pnl || 0) >= 0 ? '+' : ''}{(status?.total_pnl || 0).toFixed(1)}%
               </div>
             </div>
             <div>
-              <div className="text-gray-500">UPTIME</div>
-              <div className="text-skull-green text-xl">
+              <div className="text-skull-text-dim text-[10px]">LAST UPDATE</div>
+              <div className="text-skull-text text-lg">
                 {status?.updated_at
-                  ? Math.floor((Date.now() - new Date(status.updated_at).getTime()) / 60000) + 'm ago'
-                  : 'N/A'}
+                  ? Math.floor((Date.now() - new Date(status.updated_at).getTime()) / 60000) + 'm'
+                  : '--'}
               </div>
             </div>
           </div>
         </motion.div>
 
         {/* Footer */}
-        <div className="mt-4 text-center text-xs text-gray-600">
+        <div className="mt-4 text-center text-[10px] text-skull-text-dim">
           <span>SKULL AGENT v2.0</span>
           <span className="mx-2">|</span>
-          <span>Hunt or be hunted</span>
+          <span>darkweb edition</span>
           <span className="mx-2">|</span>
-          <span className="text-skull-blood">&#9760;</span>
+          <span className="text-skull-blood">hunt or be hunted</span>
         </div>
       </div>
     </div>
