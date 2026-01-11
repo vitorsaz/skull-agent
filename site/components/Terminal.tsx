@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef } from 'react'
 import { motion } from 'framer-motion'
-import { getPumpPortalSocket, LiveToken, TradeUpdate, calculateScore, fetchRecentTokens } from '@/lib/pumpportal'
+import { getPumpPortalSocket, LiveToken, TradeUpdate, calculateScore, fetchRecentTokens, DEV_WALLETS } from '@/lib/pumpportal'
 import TokenDetails from './TokenDetails'
 
 const SKULL_LOGO_URL = 'https://media.discordapp.net/attachments/1454587961642582039/1459762883562049639/image.png?ex=696475a0&is=69632420&hm=522e0130286a30691dd624369482c5103266686216d3c0945843f54b54de43a4&=&format=webp&quality=lossless'
@@ -36,6 +36,8 @@ export default function Terminal() {
     avoid: 0,
     trades: 0
   })
+  const [devToken, setDevToken] = useState<LiveToken | null>(null)
+  const [showDevAlert, setShowDevAlert] = useState(false)
   const logsEndRef = useRef<HTMLDivElement>(null)
   const socketRef = useRef<ReturnType<typeof getPumpPortalSocket> | null>(null)
   const tokensLoadedRef = useRef(false)
@@ -46,6 +48,15 @@ export default function Terminal() {
     socketRef.current = socket
 
     socket.onStatus(setWsStatus)
+
+    // Handle DEV WALLET token creation - show alert!
+    socket.onDevToken((token) => {
+      console.log('[SKULL] 🚨 DEV TOKEN ALERT:', token.symbol)
+      setDevToken(token)
+      setShowDevAlert(true)
+      // Auto-hide after 30 seconds
+      setTimeout(() => setShowDevAlert(false), 30000)
+    })
 
     socket.onToken((token) => {
       tokensLoadedRef.current = true
@@ -363,6 +374,80 @@ export default function Terminal() {
       {/* Token Details Modal */}
       {selectedCA && (
         <TokenDetails ca={selectedCA} onClose={() => setSelectedCA(null)} />
+      )}
+
+      {/* DEV WALLET ALERT */}
+      {showDevAlert && devToken && (
+        <motion.div
+          initial={{ opacity: 0, y: -50, scale: 0.9 }}
+          animate={{ opacity: 1, y: 0, scale: 1 }}
+          exit={{ opacity: 0, y: -50, scale: 0.9 }}
+          className="fixed top-4 left-1/2 -translate-x-1/2 z-[100] w-full max-w-lg"
+        >
+          <div className="bg-skull-blood/95 border-2 border-red-500 rounded-lg p-4 shadow-2xl shadow-red-500/50">
+            <div className="flex items-center justify-between mb-3">
+              <div className="flex items-center gap-2">
+                <motion.span
+                  animate={{ scale: [1, 1.2, 1] }}
+                  transition={{ duration: 0.5, repeat: Infinity }}
+                  className="text-2xl"
+                >
+                  🚨
+                </motion.span>
+                <span className="text-white font-bold text-lg">DEV WALLET TOKEN!</span>
+              </div>
+              <button
+                onClick={() => setShowDevAlert(false)}
+                className="text-white/60 hover:text-white"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="bg-black/30 rounded-lg p-3 mb-3">
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-white font-bold text-xl">{devToken.symbol}</span>
+                <span className="text-white/80 text-sm">{devToken.name}</span>
+              </div>
+              <div
+                onClick={(e) => {
+                  navigator.clipboard.writeText(devToken.mint)
+                  setCopiedCA(devToken.mint)
+                  setTimeout(() => setCopiedCA(null), 2000)
+                }}
+                className={`p-2 rounded border cursor-pointer transition-all text-center ${
+                  copiedCA === devToken.mint
+                    ? 'bg-green-500/30 border-green-500 text-green-400'
+                    : 'border-white/30 text-white/80 hover:border-white hover:text-white'
+                }`}
+              >
+                <p className="font-mono text-xs break-all">
+                  {copiedCA === devToken.mint ? '✓ COPIED!' : devToken.mint}
+                </p>
+              </div>
+            </div>
+
+            <div className="flex gap-2">
+              <button
+                onClick={() => {
+                  setSelectedCA(devToken.mint)
+                  setShowDevAlert(false)
+                }}
+                className="flex-1 py-2 bg-white/20 hover:bg-white/30 text-white rounded font-medium text-sm transition-colors"
+              >
+                VIEW ANALYSIS
+              </button>
+              <a
+                href={`https://pump.fun/${devToken.mint}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex-1 py-2 bg-white text-black rounded font-medium text-sm text-center hover:bg-white/90 transition-colors"
+              >
+                OPEN PUMP.FUN
+              </a>
+            </div>
+          </div>
+        </motion.div>
       )}
 
       <div className="max-w-7xl mx-auto relative z-10">

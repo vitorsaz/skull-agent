@@ -180,6 +180,11 @@ export async function fetchTokenMetadata(uri: string): Promise<TokenMetadata | n
   }
 }
 
+// DEV WALLETS TO TRACK - tokens from these wallets get priority
+export const DEV_WALLETS = [
+  '3fbNNKSMzsbmbqqVxBvGV3Wsz8dXSKb5cWDCPjHjyknz'
+]
+
 export class PumpPortalSocket {
   private ws: WebSocket | null = null
   private reconnectAttempts = 0
@@ -188,6 +193,7 @@ export class PumpPortalSocket {
   private onTokenCallback: ((token: LiveToken) => void) | null = null
   private onTradeCallback: ((trade: TradeUpdate) => void) | null = null
   private onStatusCallback: ((status: 'connected' | 'disconnected' | 'connecting') => void) | null = null
+  private onDevTokenCallback: ((token: LiveToken) => void) | null = null
   private pingInterval: ReturnType<typeof setInterval> | null = null
   private isConnecting = false
   private connectionTimeout: ReturnType<typeof setTimeout> | null = null
@@ -240,6 +246,15 @@ export class PumpPortalSocket {
           console.log('[SKULL] Subscribed to new tokens')
         }
 
+        // Subscribe to DEV WALLETS for instant detection
+        if (DEV_WALLETS.length > 0 && this.ws?.readyState === WebSocket.OPEN) {
+          this.ws.send(JSON.stringify({
+            method: 'subscribeAccountTrade',
+            keys: DEV_WALLETS
+          }))
+          console.log(`[SKULL] Subscribed to ${DEV_WALLETS.length} dev wallet(s)`)
+        }
+
         // Re-subscribe to previously tracked tokens
         if (this.subscribedTokens.size > 0 && this.ws?.readyState === WebSocket.OPEN) {
           const tokens = Array.from(this.subscribedTokens)
@@ -275,6 +290,8 @@ export class PumpPortalSocket {
           // Check if it's a new token creation event
           if (data.txType === 'create' && data.mint) {
             const mcapSol = data.marketCapSol || 0
+            const isDevWallet = DEV_WALLETS.includes(data.traderPublicKey || '')
+
             const token: LiveToken = {
               signature: data.signature || '',
               mint: data.mint,
@@ -309,6 +326,12 @@ export class PumpPortalSocket {
 
             // Auto-subscribe to this token's trades for real-time mcap updates
             this.subscribeToToken(token.mint)
+
+            // If from DEV WALLET, trigger special callback
+            if (isDevWallet) {
+              console.log('[SKULL] 🚨 DEV WALLET TOKEN DETECTED:', token.symbol, token.mint)
+              this.onDevTokenCallback?.(token)
+            }
 
             this.onTokenCallback?.(token)
           }
@@ -433,6 +456,10 @@ export class PumpPortalSocket {
 
   onStatus(callback: (status: 'connected' | 'disconnected' | 'connecting') => void) {
     this.onStatusCallback = callback
+  }
+
+  onDevToken(callback: (token: LiveToken) => void) {
+    this.onDevTokenCallback = callback
   }
 
   disconnect() {
