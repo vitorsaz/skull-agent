@@ -3,8 +3,9 @@ import express from 'express';
 import cors from 'cors';
 import { config } from './config.js';
 import { supabase, updateSystemStatus, upsertToken, recordTrade, createPosition, getOpenPositions, closePosition, logSniperAction, getRecentTokens, getSniperLogs } from './lib/supabase.js';
-import { getTokenInfo, getSolPrice, analyzeForSnipe } from './lib/birdeye.js';
-import { fetchImageFromIPFS, printSkull, printKill, formatMarketCap, sleep } from './lib/utils.js';
+import { getTokenInfo, getSolPrice } from './lib/birdeye.js';
+import { fetchImageFromIPFS, printSkull, formatMarketCap, sleep } from './lib/utils.js';
+import { analyzeToken, getVerdictEmoji, formatAnalysisLog } from './lib/analyzer.js';
 import {
     loadWallet,
     getWallet,
@@ -18,7 +19,7 @@ import {
 } from './lib/pumpportal.js';
 
 // ═══════════════════════════════════════════════════════════════
-// SKULL AGENT - SNIPER BOT
+// SKULL AGENT - SNIPER BOT v2.0
 // ═══════════════════════════════════════════════════════════════
 
 let stats = {
@@ -26,7 +27,8 @@ let stats = {
     snipesExecuted: 0,
     kills: 0,
     deaths: 0,
-    totalPnl: 0
+    totalPnl: 0,
+    lastToken: null
 };
 
 // ═══════════════════════════════════════════════════════════════
@@ -75,6 +77,41 @@ app.get('/tokens', async (req, res) => {
     res.json(tokens);
 });
 
+// Token especifico por CA
+app.get('/token/:ca', async (req, res) => {
+    const { ca } = req.params;
+    const { data } = await supabase
+        .from('tokens')
+        .select('*')
+        .eq('ca', ca)
+        .single();
+
+    if (!data) {
+        return res.status(404).json({ error: 'Token not found' });
+    }
+
+    // Buscar logs relacionados
+    const { data: logs } = await supabase
+        .from('sniper_logs')
+        .select('*')
+        .eq('ca', ca)
+        .order('timestamp', { ascending: false })
+        .limit(20);
+
+    res.json({ token: data, logs: logs || [] });
+});
+
+// Analisar token manualmente
+app.post('/analyze', async (req, res) => {
+    const { ca } = req.body;
+    if (!ca) {
+        return res.status(400).json({ error: 'CA required' });
+    }
+
+    const analysis = await analyzeToken(ca, {});
+    res.json(analysis);
+});
+
 // Logs do sniper
 app.get('/logs', async (req, res) => {
     const logs = await getSniperLogs(100);
@@ -103,7 +140,7 @@ app.post('/toggle-sniper', (req, res) => {
 });
 
 app.listen(config.PORT, () => {
-    console.log(`[API] ☠️ Skull API em http://localhost:${config.PORT}`);
+    console.log(`[API] SKULL API em http://localhost:${config.PORT}`);
 });
 
 // ═══════════════════════════════════════════════════════════════
@@ -111,17 +148,17 @@ app.listen(config.PORT, () => {
 // ═══════════════════════════════════════════════════════════════
 
 async function processNewToken(msg) {
-    const { mint: ca, name, symbol, uri, marketCapSol } = msg;
+    const { mint: ca, name, symbol, uri, marketCapSol, vSolInBondingCurve } = msg;
     stats.tokensScanned++;
+    stats.lastToken = { ca, name, symbol, time: new Date().toISOString() };
 
     console.log('');
     console.log('╔════════════════════════════════════════════════════════════╗');
-    console.log(`║ 💀 NOVO ALVO DETECTADO                                     ║`);
-    console.log(`║ ${(name || 'Unknown').slice(0, 30).padEnd(30)} (${(symbol || '???').slice(0, 6).padEnd(6)}) ║`);
-    console.log(`║ CA: ${ca.slice(0, 20)}...${ca.slice(-8)}                  ║`);
+    console.log(`║ 💀 NOVO ALVO #${stats.tokensScanned}`.padEnd(61) + '║');
+    console.log(`║ ${(name || 'Unknown').slice(0, 30).padEnd(30)} (${(symbol || '???').slice(0, 8).padEnd(8)})`.padEnd(61) + '║');
     console.log('╚════════════════════════════════════════════════════════════╝');
 
-    // Salvar token no banco
+    // Salvar token inicial
     await upsertToken({
         ca,
         nome: name || 'Unknown',
@@ -129,7 +166,7 @@ async function processNewToken(msg) {
         status: 'scanning'
     });
 
-    // Log da acao
+    // Log deteccao
     await logSniperAction({
         action: 'DETECTED',
         ca,
@@ -137,60 +174,64 @@ async function processNewToken(msg) {
         symbol: symbol || '???'
     });
 
+    // Aguardar um pouco para dados de mercado
+    await sleep(1500);
+
+    // ANALISE COMPLETA
+    console.log('[SKULL] Analisando alvo...');
+    const analysis = await analyzeToken(ca, {
+        name,
+        symbol,
+        marketCapSol,
+        vSolInBondingCurve,
+        timestamp: new Date().toISOString()
+    });
+
+    // Log analise formatada
+    console.log(formatAnalysisLog(analysis));
+
     // Buscar logo
     let logo = null;
     if (uri) {
         logo = await fetchImageFromIPFS(uri);
     }
 
-    // Analisar para snipe
-    console.log('[SKULL] 🔍 Analisando alvo...');
-    await sleep(2000); // Esperar dados de mercado
-
-    const analysis = await analyzeForSnipe(ca);
-
-    // Calcular market cap
-    const solPrice = await getSolPrice();
-    const mcapFromPump = (marketCapSol || 0) * solPrice;
-    const mcap = mcapFromPump > 0 ? mcapFromPump : (analysis.info?.mc || 0);
-
-    // Atualizar token
+    // Atualizar token no banco com analise completa
     await upsertToken({
         ca,
-        nome: name || analysis.info?.name || 'Unknown',
-        simbolo: symbol || analysis.info?.symbol || '???',
-        logo: logo || analysis.info?.logo || null,
-        market_cap: mcap,
-        preco: analysis.info?.price || 0,
-        holders: analysis.info?.holders || 0,
-        liquidity: analysis.info?.liquidity || 0,
-        status: analysis.shouldSnipe ? 'approved' : 'rejected',
-        score: analysis.score || 0,
-        reject_reason: analysis.reason !== 'APPROVED' ? analysis.reason : null
+        nome: analysis.tokenInfo.name,
+        simbolo: analysis.tokenInfo.symbol,
+        logo: logo || analysis.tokenInfo.logo,
+        market_cap: analysis.tokenInfo.mcap,
+        preco: analysis.tokenInfo.price,
+        holders: analysis.tokenInfo.holders,
+        liquidity: analysis.tokenInfo.liquidity,
+        status: analysis.verdict.toLowerCase(),
+        score: analysis.totalScore,
+        reject_reason: !analysis.shouldSnipe ? analysis.reasons.join(', ') : null
     });
 
-    // Log analise
+    // Log resultado da analise
     await logSniperAction({
         action: analysis.shouldSnipe ? 'APPROVED' : 'REJECTED',
         ca,
-        name: name || 'Unknown',
-        symbol: symbol || '???',
-        reason: analysis.reason,
-        score: analysis.score,
-        mcap,
-        liquidity: analysis.info?.liquidity || 0
+        name: analysis.tokenInfo.name,
+        symbol: analysis.tokenInfo.symbol,
+        reason: analysis.reasons.join(', '),
+        score: analysis.totalScore,
+        mcap: analysis.tokenInfo.mcap,
+        liquidity: analysis.tokenInfo.liquidity
     });
 
-    console.log(`[SKULL] ${analysis.shouldSnipe ? '✅ APROVADO' : '❌ REJEITADO'} - ${analysis.reason}`);
-    if (analysis.score) console.log(`[SKULL] Score: ${analysis.score}/100`);
-
-    // EXECUTAR SNIPE se aprovado e habilitado
+    // EXECUTAR SNIPE se aprovado
     if (analysis.shouldSnipe && config.SNIPER.ENABLED && getWallet()) {
         console.log('[SKULL] 🎯 EXECUTANDO SNIPE...');
 
         await logSniperAction({
             action: 'SNIPING',
             ca,
+            name: analysis.tokenInfo.name,
+            symbol: analysis.tokenInfo.symbol,
             amount: config.SNIPER.BUY_AMOUNT_SOL
         });
 
@@ -199,29 +240,30 @@ async function processNewToken(msg) {
         if (tx) {
             stats.snipesExecuted++;
 
-            // Registrar trade
             await recordTrade({
                 token_id: ca,
                 tipo: 'buy',
                 valor_sol: config.SNIPER.BUY_AMOUNT_SOL,
-                preco: analysis.info?.price || 0,
+                preco: analysis.tokenInfo.price,
                 tx_signature: tx
             });
 
-            // Criar posicao
             await createPosition({
                 token_id: ca,
                 valor_sol: config.SNIPER.BUY_AMOUNT_SOL,
-                entry_price: analysis.info?.price || 0,
+                entry_price: analysis.tokenInfo.price,
                 status: 'open'
             });
 
-            // Monitorar token
+            await upsertToken({ ca, status: 'sniped' });
+
             subscribeToken(ca);
 
             await logSniperAction({
                 action: 'SNIPE_SUCCESS',
                 ca,
+                name: analysis.tokenInfo.name,
+                symbol: analysis.tokenInfo.symbol,
                 tx_signature: tx
             });
 
@@ -229,8 +271,11 @@ async function processNewToken(msg) {
         } else {
             await logSniperAction({
                 action: 'SNIPE_FAILED',
-                ca
+                ca,
+                name: analysis.tokenInfo.name,
+                symbol: analysis.tokenInfo.symbol
             });
+            console.log('[SKULL] ❌ Snipe falhou');
         }
     }
 
@@ -238,7 +283,7 @@ async function processNewToken(msg) {
 }
 
 // ═══════════════════════════════════════════════════════════════
-// MONITORAR POSICOES (auto sell)
+// MONITORAR POSICOES
 // ═══════════════════════════════════════════════════════════════
 
 async function monitorPositions() {
@@ -251,9 +296,11 @@ async function monitorPositions() {
 
             const currentValue = info.price;
             const entryPrice = pos.entry_price;
+
+            if (!entryPrice || entryPrice === 0) continue;
+
             const pnlPercent = ((currentValue - entryPrice) / entryPrice) * 100;
 
-            // Atualizar posicao
             await supabase
                 .from('positions')
                 .update({
@@ -262,7 +309,7 @@ async function monitorPositions() {
                 })
                 .eq('id', pos.id);
 
-            // Auto sell em profit
+            // Take profit
             if (pnlPercent >= config.SNIPER.AUTO_SELL_PROFIT) {
                 console.log(`[SKULL] 🩸 TAKE PROFIT - ${pos.tokens?.simbolo} +${pnlPercent.toFixed(2)}%`);
 
@@ -271,11 +318,12 @@ async function monitorPositions() {
                     stats.kills++;
                     stats.totalPnl += pnlPercent;
                     await closePosition(pos.id, pnlPercent);
-                    printKill(pos.tokens?.nome || 'Unknown', pos.tokens?.simbolo || '???', pnlPercent);
 
                     await logSniperAction({
                         action: 'TAKE_PROFIT',
                         ca: pos.token_id,
+                        name: pos.tokens?.nome,
+                        symbol: pos.tokens?.simbolo,
                         pnl_percent: pnlPercent,
                         tx_signature: tx
                     });
@@ -295,13 +343,15 @@ async function monitorPositions() {
                     await logSniperAction({
                         action: 'STOP_LOSS',
                         ca: pos.token_id,
+                        name: pos.tokens?.nome,
+                        symbol: pos.tokens?.simbolo,
                         pnl_percent: pnlPercent,
                         tx_signature: tx
                     });
                 }
             }
         } catch (e) {
-            console.error(`[MONITOR] Erro em ${pos.token_id}:`, e.message);
+            console.error(`[MONITOR] Erro:`, e.message);
         }
     }
 }
@@ -315,18 +365,16 @@ async function main() {
 
     console.log('');
     console.log('╔════════════════════════════════════════════════════════════╗');
-    console.log('║           ☠️  SKULL AGENT - INICIANDO  ☠️                   ║');
+    console.log('║           ☠️  SKULL AGENT v2.0 - INICIANDO  ☠️              ║');
     console.log('╚════════════════════════════════════════════════════════════╝');
     console.log('');
 
-    // Carregar wallet
     const wallet = loadWallet();
     if (wallet) {
         const balance = await getBalance();
         console.log(`[SKULL] 💰 Balance: ${balance.toFixed(4)} SOL`);
     }
 
-    // Status inicial
     await updateSystemStatus({
         status: 'STARTING',
         wallet_address: wallet?.publicKey.toBase58() || null,
@@ -334,7 +382,6 @@ async function main() {
         sniper_enabled: config.SNIPER.ENABLED
     });
 
-    // Conectar WebSocket
     connectPumpPortal({
         onConnect: async () => {
             await updateSystemStatus({ status: 'HUNTING' });
@@ -342,9 +389,11 @@ async function main() {
             console.log('');
             console.log('[SKULL] ☠️ MODO CACA ATIVADO');
             console.log(`[SKULL] 🎯 Sniper: ${config.SNIPER.ENABLED ? 'LIGADO' : 'DESLIGADO'}`);
-            console.log(`[SKULL] 💰 Buy amount: ${config.SNIPER.BUY_AMOUNT_SOL} SOL`);
-            console.log(`[SKULL] 📈 Take profit: +${config.SNIPER.AUTO_SELL_PROFIT}%`);
-            console.log(`[SKULL] 📉 Stop loss: ${config.SNIPER.STOP_LOSS}%`);
+            console.log(`[SKULL] 💰 Buy: ${config.SNIPER.BUY_AMOUNT_SOL} SOL`);
+            console.log(`[SKULL] 📈 TP: +${config.SNIPER.AUTO_SELL_PROFIT}%`);
+            console.log(`[SKULL] 📉 SL: ${config.SNIPER.STOP_LOSS}%`);
+            console.log(`[SKULL] 💧 Min Liq: $${config.SNIPER.MIN_LIQUIDITY}`);
+            console.log(`[SKULL] 📊 Max MCap: $${config.SNIPER.MAX_MCAP}`);
             console.log('');
         },
         onDisconnect: async () => {
@@ -353,7 +402,7 @@ async function main() {
         onToken: processNewToken
     });
 
-    // Atualizar balance periodicamente
+    // Atualizar status periodicamente
     setInterval(async () => {
         if (wallet) {
             const balance = await getBalance();
@@ -368,7 +417,7 @@ async function main() {
         }
     }, 30000);
 
-    // Monitorar posicoes abertas
+    // Monitorar posicoes
     setInterval(monitorPositions, 15000);
 }
 
