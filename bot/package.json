@@ -1,0 +1,21 @@
+{
+  "name": "skull-agent-bot",
+  "version": "1.0.0",
+  "description": "SKULL AGENT - Sniper Bot for PumpFun",
+  "type": "module",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js"
+  },
+  "dependencies": {
+    "@solana/web3.js": "^1.95.0",
+    "@solana/spl-token": "^0.4.0",
+    "@supabase/supabase-js": "^2.45.0",
+    "bs58": "^6.0.0",
+    "express": "^4.21.0",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.0",
+    "node-fetch": "^3.3.0",
+    "ws": "^8.18.0"
+  }
+}
