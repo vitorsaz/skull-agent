@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 
-const SKULL_LOGO_URL = 'https://media.discordapp.net/attachments/1454587961642582039/1459763303877312733/fdf384eb-e0ae-47a5-bfe2-1791f62166ab.png?ex=69647604&is=69632484&hm=c6bd67af74990c793e69d7b720c26ef6410b2b089929fdb546a768368a7858b9&=&format=webp&quality=lossless&width=1008&height=1008'
+const SKULL_LOGO_URL = 'https://media.discordapp.net/attachments/1454587961642582039/1459762883562049639/image.png?ex=696475a0&is=69632420&hm=522e0130286a30691dd624369482c5103266686216d3c0945843f54b54de43a4&=&format=webp&quality=lossless'
 
 const LOADING_MESSAGES = [
   'initializing protocols...',
