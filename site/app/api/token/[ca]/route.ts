@@ -2,9 +2,9 @@ import { NextRequest, NextResponse } from 'next/server'
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: { ca: string } }
+  context: { params: Promise<{ ca: string }> }
 ) {
-  const ca = params.ca
+  const { ca } = await context.params
 
   if (!ca || ca.length < 32) {
     return NextResponse.json({ error: 'Invalid contract address' }, { status: 400 })
@@ -15,18 +15,33 @@ export async function GET(
     const response = await fetch(`https://frontend-api.pump.fun/coins/${ca}`, {
       headers: {
         'Accept': 'application/json',
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Referer': 'https://pump.fun/',
+        'Origin': 'https://pump.fun'
       },
-      next: { revalidate: 30 } // Cache for 30 seconds
+      cache: 'no-store'
     })
 
     if (!response.ok) {
-      return NextResponse.json({ error: 'Token not found' }, { status: 404 })
+      // Try alternative API
+      const altResponse = await fetch(`https://client-api-2-74b1891ee9f9.herokuapp.com/coins/${ca}`, {
+        headers: {
+          'Accept': 'application/json',
+          'User-Agent': 'Mozilla/5.0'
+        },
+        cache: 'no-store'
+      })
+
+      if (!altResponse.ok) {
+        return NextResponse.json({ error: 'Token not found' }, { status: 404 })
+      }
+
+      const altData = await altResponse.json()
+      const analysis = analyzeToken(altData)
+      return NextResponse.json({ ...altData, analysis })
     }
 
     const data = await response.json()
-
-    // Perform deep analysis
     const analysis = analyzeToken(data)
 
     return NextResponse.json({
@@ -87,8 +102,6 @@ function analyzeToken(token: TokenData): Analysis {
   const description = (token.description || '').toLowerCase()
 
   // ===== NARRATIVE ANALYSIS =====
-
-  // Trending narratives (2024-2025)
   const trendingNarratives = [
     { keywords: ['ai', 'artificial', 'intelligence', 'gpt', 'agent', 'neural'], name: 'AI/Agent', bonus: 15 },
     { keywords: ['trump', 'maga', 'donald', 'president', 'election'], name: 'Political', bonus: 12 },
@@ -166,7 +179,6 @@ function analyzeToken(token: TokenData): Analysis {
   }
 
   // ===== SOCIAL ANALYSIS =====
-
   if (token.twitter) {
     socialScore += 15
     greenFlags.push('Has Twitter')
@@ -211,7 +223,6 @@ function analyzeToken(token: TokenData): Analysis {
   }
 
   // ===== MARKET ANALYSIS =====
-
   const mcap = token.usdMarketCap || 0
 
   if (mcap > 0 && mcap < 10000) {
@@ -250,27 +261,23 @@ function analyzeToken(token: TokenData): Analysis {
     } else if (ageMinutes < 30) {
       riskScore += 5
       signals.push({ type: 'positive', category: 'Timing', message: 'Fresh token (<30min)', weight: 5 })
-    } else if (ageMinutes > 1440) { // > 24 hours
+    } else if (ageMinutes > 1440) {
       riskScore -= 5
       signals.push({ type: 'neutral', category: 'Timing', message: 'Older token (>24h)', weight: -5 })
     }
   }
 
   // ===== CALCULATE FINAL SCORE =====
-
-  // Cap individual scores
   narrativeScore = Math.max(0, Math.min(100, narrativeScore))
   socialScore = Math.max(0, Math.min(100, socialScore))
   riskScore = Math.max(0, Math.min(100, riskScore))
 
-  // Weighted average
   const finalScore = Math.round(
     (narrativeScore * 0.35) +
     (socialScore * 0.30) +
     (riskScore * 0.35)
   )
 
-  // Determine verdict and recommendation
   let verdict: string
   let recommendation: string
 
@@ -288,7 +295,6 @@ function analyzeToken(token: TokenData): Analysis {
     recommendation = 'Too many red flags. High probability of loss.'
   }
 
-  // Override verdict if too many red flags
   if (redFlags.length >= 3) {
     verdict = 'AVOID'
     recommendation = 'Multiple red flags detected. Do not enter.'
