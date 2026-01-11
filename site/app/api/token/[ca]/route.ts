@@ -10,63 +10,102 @@ export async function GET(
     return NextResponse.json({ error: 'Invalid contract address' }, { status: 400 })
   }
 
-  try {
-    // Fetch token data from pump.fun
-    const response = await fetch(`https://frontend-api.pump.fun/coins/${ca}`, {
+  console.log('[API] Fetching token:', ca)
+
+  // List of API endpoints to try
+  const endpoints = [
+    {
+      url: `https://frontend-api.pump.fun/coins/${ca}`,
       headers: {
         'Accept': 'application/json',
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Referer': 'https://pump.fun/',
-        'Origin': 'https://pump.fun'
-      },
-      cache: 'no-store'
-    })
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+      }
+    },
+    {
+      url: `https://client-api-2-74b1891ee9f9.herokuapp.com/coins/${ca}`,
+      headers: {
+        'Accept': 'application/json',
+        'User-Agent': 'Mozilla/5.0',
+      }
+    }
+  ]
 
-    if (!response.ok) {
-      // Try alternative API
-      const altResponse = await fetch(`https://client-api-2-74b1891ee9f9.herokuapp.com/coins/${ca}`, {
-        headers: {
-          'Accept': 'application/json',
-          'User-Agent': 'Mozilla/5.0'
-        },
-        cache: 'no-store'
+  let lastError = null
+
+  for (const endpoint of endpoints) {
+    try {
+      console.log('[API] Trying:', endpoint.url)
+
+      const response = await fetch(endpoint.url, {
+        headers: endpoint.headers,
+        cache: 'no-store',
+        signal: AbortSignal.timeout(10000) // 10 second timeout
       })
 
-      if (!altResponse.ok) {
-        return NextResponse.json({ error: 'Token not found' }, { status: 404 })
+      if (response.ok) {
+        const data = await response.json()
+        console.log('[API] Success from:', endpoint.url)
+
+        // Transform data to expected format
+        const tokenData = {
+          mint: data.mint || ca,
+          name: data.name || 'Unknown',
+          symbol: data.symbol || '???',
+          description: data.description || '',
+          image: data.image_uri || data.image || '',
+          twitter: data.twitter || null,
+          telegram: data.telegram || null,
+          website: data.website || null,
+          showName: data.show_name ?? true,
+          createdOn: data.created_timestamp ? new Date(data.created_timestamp).toISOString() : '',
+          marketCap: data.market_cap || 0,
+          usdMarketCap: data.usd_market_cap || 0,
+          bondingCurve: data.bonding_curve || '',
+          associatedBondingCurve: data.associated_bonding_curve || '',
+          creator: data.creator || '',
+          raydiumPool: data.raydium_pool || null,
+          complete: data.complete || false,
+          reply_count: data.reply_count || 0,
+          king_of_the_hill_timestamp: data.king_of_the_hill_timestamp || null,
+          created_timestamp: data.created_timestamp || null
+        }
+
+        const analysis = analyzeToken(tokenData)
+
+        return NextResponse.json({
+          ...tokenData,
+          analysis
+        })
+      } else {
+        console.log('[API] Failed:', endpoint.url, response.status)
+        lastError = `HTTP ${response.status}`
       }
-
-      const altData = await altResponse.json()
-      const analysis = analyzeToken(altData)
-      return NextResponse.json({ ...altData, analysis })
+    } catch (error) {
+      console.error('[API] Error from:', endpoint.url, error)
+      lastError = error instanceof Error ? error.message : 'Unknown error'
     }
-
-    const data = await response.json()
-    const analysis = analyzeToken(data)
-
-    return NextResponse.json({
-      ...data,
-      analysis
-    })
-  } catch (error) {
-    console.error('Error fetching token:', error)
-    return NextResponse.json({ error: 'Failed to fetch token data' }, { status: 500 })
   }
+
+  // If all endpoints fail, return error
+  return NextResponse.json(
+    { error: `Token not found. ${lastError}` },
+    { status: 404 }
+  )
 }
 
 interface TokenData {
   name: string
   symbol: string
   description?: string
-  twitter?: string
-  telegram?: string
-  website?: string
+  twitter?: string | null
+  telegram?: string | null
+  website?: string | null
   usdMarketCap?: number
   creator?: string
   complete?: boolean
   reply_count?: number
-  king_of_the_hill_timestamp?: number
-  created_timestamp?: number
+  king_of_the_hill_timestamp?: number | null
+  created_timestamp?: number | null
 }
 
 interface Analysis {
