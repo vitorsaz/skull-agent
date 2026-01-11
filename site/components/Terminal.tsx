@@ -82,6 +82,7 @@ export default function Terminal() {
 
     // Handle trade updates for real-time market cap
     socket.onTrade((trade: TradeUpdate) => {
+      // Update token market cap in real-time
       setTokens(prev => prev.map(token => {
         if (token.mint === trade.mint) {
           return {
@@ -98,19 +99,25 @@ export default function Terminal() {
       // Update trades count
       setStats(prev => ({ ...prev, trades: prev.trades + 1 }))
 
-      // Add trade to logs
+      // Find token info from tokens list or logs
       setLogs(prev => {
-        const token = prev.find(l => l.ca === trade.mint)
-        if (token) {
+        // First check tokens list
+        const tokenFromList = tokens.find(t => t.mint === trade.mint)
+        // Then check logs
+        const tokenFromLog = prev.find(l => l.ca === trade.mint)
+
+        const tokenInfo = tokenFromList || tokenFromLog
+
+        if (tokenInfo) {
           const tradeLog: LogEntry = {
-            id: `${trade.mint}-${Date.now()}-trade`,
+            id: `${trade.mint}-${Date.now()}-trade-${Math.random()}`,
             action: trade.txType.toUpperCase(),
             ca: trade.mint,
-            name: token.name,
-            symbol: token.symbol,
+            name: 'name' in tokenInfo ? tokenInfo.name : tokenInfo.name,
+            symbol: 'symbol' in tokenInfo ? tokenInfo.symbol : tokenInfo.symbol,
             mcap: trade.marketCapUsd,
-            score: token.score,
-            status: token.status,
+            score: 'score' in tokenInfo ? (tokenInfo.score || 50) : tokenInfo.score,
+            status: 'status' in tokenInfo ? (tokenInfo.status || 'SCANNING') : tokenInfo.status,
             timestamp: trade.timestamp
           }
           return [tradeLog, ...prev.slice(0, 199)]

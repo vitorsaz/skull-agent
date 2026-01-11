@@ -48,7 +48,23 @@ export interface TokenMetadata {
   website?: string
 }
 
-const SOL_PRICE_USD = 180
+// Fetch SOL price from API
+let SOL_PRICE_USD = 180
+let lastPriceFetch = 0
+
+async function updateSolPrice() {
+  if (Date.now() - lastPriceFetch < 60000) return // Update every minute
+  try {
+    const res = await fetch('https://api.coingecko.com/api/v3/simple/price?ids=solana&vs_currencies=usd')
+    const data = await res.json()
+    if (data?.solana?.usd) {
+      SOL_PRICE_USD = data.solana.usd
+      lastPriceFetch = Date.now()
+    }
+  } catch {
+    // Keep using cached price
+  }
+}
 
 // Trending narratives for deep analysis
 const TRENDING_NARRATIVES = [
@@ -167,44 +183,74 @@ export async function fetchTokenMetadata(uri: string): Promise<TokenMetadata | n
 export class PumpPortalSocket {
   private ws: WebSocket | null = null
   private reconnectAttempts = 0
-  private maxReconnects = 5
+  private maxReconnects = 10
   private subscribedTokens: Set<string> = new Set()
   private onTokenCallback: ((token: LiveToken) => void) | null = null
   private onTradeCallback: ((trade: TradeUpdate) => void) | null = null
   private onStatusCallback: ((status: 'connected' | 'disconnected' | 'connecting') => void) | null = null
+  private pingInterval: ReturnType<typeof setInterval> | null = null
+  private isConnecting = false
 
   connect() {
-    if (this.ws?.readyState === WebSocket.OPEN) return
+    if (this.ws?.readyState === WebSocket.OPEN || this.isConnecting) return
 
+    this.isConnecting = true
     this.onStatusCallback?.('connecting')
 
+    // Update SOL price
+    updateSolPrice()
+
     try {
+      console.log('[SKULL] Connecting to PumpPortal...')
       this.ws = new WebSocket('wss://pumpportal.fun/api/data')
 
       this.ws.onopen = () => {
-        console.log('[SKULL] Connected to PumpPortal')
+        console.log('[SKULL] Connected to PumpPortal WebSocket')
+        this.isConnecting = false
         this.reconnectAttempts = 0
         this.onStatusCallback?.('connected')
 
-        // Subscribe to new tokens
-        this.ws?.send(JSON.stringify({ method: 'subscribeNewToken' }))
+        // Subscribe to new token creations
+        if (this.ws?.readyState === WebSocket.OPEN) {
+          this.ws.send(JSON.stringify({ method: 'subscribeNewToken' }))
+          console.log('[SKULL] Subscribed to new tokens')
+        }
 
         // Re-subscribe to previously tracked tokens
-        if (this.subscribedTokens.size > 0) {
+        if (this.subscribedTokens.size > 0 && this.ws?.readyState === WebSocket.OPEN) {
           const tokens = Array.from(this.subscribedTokens)
-          this.ws?.send(JSON.stringify({
+          this.ws.send(JSON.stringify({
             method: 'subscribeTokenTrade',
             keys: tokens
           }))
+          console.log(`[SKULL] Re-subscribed to ${tokens.length} token trades`)
         }
+
+        // Setup ping to keep connection alive
+        this.pingInterval = setInterval(() => {
+          if (this.ws?.readyState === WebSocket.OPEN) {
+            // Send a ping-like message to keep connection alive
+            try {
+              this.ws.send(JSON.stringify({ method: 'ping' }))
+            } catch {
+              // Ignore ping errors
+            }
+          }
+        }, 30000) // Every 30 seconds
       }
 
       this.ws.onmessage = async (event) => {
         try {
           const data = JSON.parse(event.data)
 
-          // Check if it's a new token event
+          // Debug logging
+          if (data.txType) {
+            console.log(`[SKULL] Event: ${data.txType}`, data.name || data.mint?.slice(0, 8))
+          }
+
+          // Check if it's a new token creation event
           if (data.txType === 'create' && data.mint) {
+            const mcapSol = data.marketCapSol || 0
             const token: LiveToken = {
               signature: data.signature || '',
               mint: data.mint,
@@ -214,12 +260,12 @@ export class PumpPortalSocket {
               bondingCurveKey: data.bondingCurveKey || '',
               vTokensInBondingCurve: data.vTokensInBondingCurve || 0,
               vSolInBondingCurve: data.vSolInBondingCurve || 0,
-              marketCapSol: data.marketCapSol || 0,
+              marketCapSol: mcapSol,
               name: data.name || 'Unknown',
               symbol: data.symbol || '???',
               uri: data.uri || '',
               timestamp: Date.now(),
-              marketCapUsd: (data.marketCapSol || 0) * SOL_PRICE_USD,
+              marketCapUsd: mcapSol * SOL_PRICE_USD,
             }
 
             // Calculate score with deep analysis
@@ -234,23 +280,24 @@ export class PumpPortalSocket {
                 if (meta?.image) {
                   token.logo = meta.image
                 }
-              })
+              }).catch(() => {})
             }
 
-            // Auto-subscribe to this token's trades
+            // Auto-subscribe to this token's trades for real-time mcap updates
             this.subscribeToToken(token.mint)
 
             this.onTokenCallback?.(token)
           }
           // Check if it's a trade event (buy/sell)
           else if ((data.txType === 'buy' || data.txType === 'sell') && data.mint) {
+            const mcapSol = data.marketCapSol || 0
             const trade: TradeUpdate = {
               mint: data.mint,
               txType: data.txType,
               tokenAmount: data.tokenAmount || 0,
               solAmount: data.solAmount || 0,
-              marketCapSol: data.marketCapSol || 0,
-              marketCapUsd: (data.marketCapSol || 0) * SOL_PRICE_USD,
+              marketCapSol: mcapSol,
+              marketCapUsd: mcapSol * SOL_PRICE_USD,
               vSolInBondingCurve: data.vSolInBondingCurve || 0,
               vTokensInBondingCurve: data.vTokensInBondingCurve || 0,
               traderPublicKey: data.traderPublicKey || '',
@@ -265,20 +312,31 @@ export class PumpPortalSocket {
         }
       }
 
-      this.ws.onclose = () => {
-        console.log('[SKULL] Disconnected from PumpPortal')
+      this.ws.onclose = (event) => {
+        console.log('[SKULL] WebSocket closed:', event.code, event.reason)
+        this.isConnecting = false
         this.onStatusCallback?.('disconnected')
+        this.clearPing()
         this.attemptReconnect()
       }
 
       this.ws.onerror = (err) => {
         console.error('[SKULL] WebSocket error:', err)
+        this.isConnecting = false
         this.onStatusCallback?.('disconnected')
       }
     } catch (err) {
       console.error('[SKULL] Connection error:', err)
+      this.isConnecting = false
       this.onStatusCallback?.('disconnected')
       this.attemptReconnect()
+    }
+  }
+
+  private clearPing() {
+    if (this.pingInterval) {
+      clearInterval(this.pingInterval)
+      this.pingInterval = null
     }
   }
 
@@ -286,11 +344,18 @@ export class PumpPortalSocket {
     if (this.subscribedTokens.has(mint)) return
 
     // Limit subscriptions to avoid overload
-    if (this.subscribedTokens.size >= 50) {
+    if (this.subscribedTokens.size >= 100) {
       // Remove oldest subscription
       const oldest = this.subscribedTokens.values().next().value
       if (oldest) {
         this.subscribedTokens.delete(oldest)
+        // Unsubscribe from the oldest token
+        if (this.ws?.readyState === WebSocket.OPEN) {
+          this.ws.send(JSON.stringify({
+            method: 'unsubscribeTokenTrade',
+            keys: [oldest]
+          }))
+        }
       }
     }
 
@@ -301,6 +366,7 @@ export class PumpPortalSocket {
         method: 'subscribeTokenTrade',
         keys: [mint]
       }))
+      console.log(`[SKULL] Subscribed to trades for ${mint.slice(0, 8)}...`)
     }
   }
 
@@ -317,14 +383,19 @@ export class PumpPortalSocket {
 
   private attemptReconnect() {
     if (this.reconnectAttempts >= this.maxReconnects) {
-      console.log('[SKULL] Max reconnection attempts reached')
+      console.log('[SKULL] Max reconnection attempts reached, will retry in 1 minute')
+      // Reset after 1 minute and try again
+      setTimeout(() => {
+        this.reconnectAttempts = 0
+        this.connect()
+      }, 60000)
       return
     }
 
     this.reconnectAttempts++
-    const delay = Math.min(1000 * Math.pow(2, this.reconnectAttempts), 30000)
+    const delay = Math.min(1000 * Math.pow(1.5, this.reconnectAttempts), 30000)
 
-    console.log(`[SKULL] Reconnecting in ${delay}ms (attempt ${this.reconnectAttempts})`)
+    console.log(`[SKULL] Reconnecting in ${Math.round(delay/1000)}s (attempt ${this.reconnectAttempts}/${this.maxReconnects})`)
     setTimeout(() => this.connect(), delay)
   }
 
@@ -341,10 +412,17 @@ export class PumpPortalSocket {
   }
 
   disconnect() {
+    this.clearPing()
     if (this.ws) {
       this.ws.close()
       this.ws = null
     }
+  }
+
+  getStatus(): 'connected' | 'disconnected' | 'connecting' {
+    if (this.isConnecting) return 'connecting'
+    if (this.ws?.readyState === WebSocket.OPEN) return 'connected'
+    return 'disconnected'
   }
 }
 
