@@ -99,25 +99,20 @@ export default function Terminal() {
       // Update trades count
       setStats(prev => ({ ...prev, trades: prev.trades + 1 }))
 
-      // Find token info from tokens list or logs
+      // Find token info from logs for trade updates
       setLogs(prev => {
-        // First check tokens list
-        const tokenFromList = tokens.find(t => t.mint === trade.mint)
-        // Then check logs
         const tokenFromLog = prev.find(l => l.ca === trade.mint)
 
-        const tokenInfo = tokenFromList || tokenFromLog
-
-        if (tokenInfo) {
+        if (tokenFromLog) {
           const tradeLog: LogEntry = {
             id: `${trade.mint}-${Date.now()}-trade-${Math.random()}`,
             action: trade.txType.toUpperCase(),
             ca: trade.mint,
-            name: 'name' in tokenInfo ? tokenInfo.name : tokenInfo.name,
-            symbol: 'symbol' in tokenInfo ? tokenInfo.symbol : tokenInfo.symbol,
+            name: tokenFromLog.name,
+            symbol: tokenFromLog.symbol,
             mcap: trade.marketCapUsd,
-            score: 'score' in tokenInfo ? (tokenInfo.score || 50) : tokenInfo.score,
-            status: 'status' in tokenInfo ? (tokenInfo.status || 'SCANNING') : tokenInfo.status,
+            score: tokenFromLog.score,
+            status: tokenFromLog.status,
             timestamp: trade.timestamp
           }
           return [tradeLog, ...prev.slice(0, 199)]
@@ -263,6 +258,19 @@ export default function Terminal() {
       case 'BUY': return 'text-green-500'
       case 'SELL': return 'text-skull-blood'
       default: return 'text-skull-text-dim'
+    }
+  }
+
+  const [copiedCA, setCopiedCA] = useState<string | null>(null)
+
+  const copyToClipboard = async (ca: string, e: React.MouseEvent) => {
+    e.stopPropagation()
+    try {
+      await navigator.clipboard.writeText(ca)
+      setCopiedCA(ca)
+      setTimeout(() => setCopiedCA(null), 2000)
+    } catch (err) {
+      console.error('Failed to copy:', err)
     }
   }
 
@@ -414,13 +422,17 @@ export default function Terminal() {
                         key={log.id}
                         initial={{ opacity: 0, x: -10 }}
                         animate={{ opacity: 1, x: 0 }}
-                        className="flex gap-2 hover:bg-skull-border/20 px-1 py-0.5 rounded cursor-pointer"
-                        onClick={() => setSelectedCA(log.ca)}
+                        className="flex gap-2 items-center hover:bg-skull-border/20 px-1 py-0.5 rounded group"
                       >
                         <span className="text-skull-text-dim">{formatTime(log.timestamp)}</span>
                         <span className={getActionColor(log.action)}>{getActionEmoji(log.action)}</span>
                         <span className={getActionColor(log.action)}>{log.action}</span>
-                        <span className="text-skull-text-bright">{log.symbol}</span>
+                        <span
+                          className="text-skull-text-bright cursor-pointer hover:underline"
+                          onClick={() => setSelectedCA(log.ca)}
+                        >
+                          {log.symbol}
+                        </span>
                         <span className="text-skull-text-dim truncate max-w-[80px]">{log.name}</span>
                         <span className={log.action === 'BUY' ? 'text-green-500' : log.action === 'SELL' ? 'text-skull-blood' : 'text-skull-text-dim'}>
                           {formatMcap(log.mcap)}
@@ -430,6 +442,16 @@ export default function Terminal() {
                             [{log.score}] {log.status}
                           </span>
                         )}
+                        <button
+                          onClick={(e) => copyToClipboard(log.ca, e)}
+                          className={`ml-auto px-1.5 py-0.5 text-[8px] border rounded opacity-0 group-hover:opacity-100 transition-all ${
+                            copiedCA === log.ca
+                              ? 'bg-green-500/20 border-green-500 text-green-500 opacity-100'
+                              : 'border-skull-border text-skull-text-dim hover:border-skull-blood hover:text-skull-blood'
+                          }`}
+                        >
+                          {copiedCA === log.ca ? 'COPIED!' : 'COPY'}
+                        </button>
                       </motion.div>
                     ))
                   )}
@@ -482,8 +504,20 @@ export default function Terminal() {
                               </div>
                             </div>
                           </div>
-                          <div className="text-skull-text-dim text-[10px] mt-2 font-mono truncate">
-                            {token.mint}
+                          <div className="flex items-center gap-2 mt-2">
+                            <span className="text-skull-text-dim text-[10px] font-mono truncate flex-1">
+                              {token.mint}
+                            </span>
+                            <button
+                              onClick={(e) => copyToClipboard(token.mint, e)}
+                              className={`px-2 py-0.5 text-[9px] border rounded transition-all ${
+                                copiedCA === token.mint
+                                  ? 'bg-green-500/20 border-green-500 text-green-500'
+                                  : 'border-skull-border text-skull-text-dim hover:border-skull-blood hover:text-skull-blood'
+                              }`}
+                            >
+                              {copiedCA === token.mint ? 'COPIED!' : 'COPY CA'}
+                            </button>
                           </div>
                           <div className="flex gap-4 mt-2 text-[10px] text-skull-text-dim">
                             <span>Initial: {(token.initialBuy / 1e9).toFixed(2)} SOL</span>
@@ -533,15 +567,31 @@ export default function Terminal() {
                       {tokens.slice(0, 8).map((token) => (
                         <div
                           key={token.mint}
-                          onClick={() => setSelectedCA(token.mint)}
-                          className="flex items-center justify-between p-2 border border-skull-border rounded hover:border-skull-blood/50 cursor-pointer transition-colors"
+                          className="flex items-center justify-between p-2 border border-skull-border rounded hover:border-skull-blood/50 transition-colors group"
                         >
                           <div className="flex items-center gap-2">
                             <div className={`w-1.5 h-1.5 rounded-full ${getScoreIndicator(token.score || 50).color}`} />
-                            <span className="text-skull-text text-xs">{token.symbol}</span>
+                            <span
+                              className="text-skull-text text-xs cursor-pointer hover:underline"
+                              onClick={() => setSelectedCA(token.mint)}
+                            >
+                              {token.symbol}
+                            </span>
                             <span className="text-skull-text-dim text-[10px]">{token.mint?.slice(0, 6)}...{token.mint?.slice(-4)}</span>
                           </div>
-                          <span className="text-skull-text-dim text-xs">{formatMcap(token.marketCapUsd || 0)}</span>
+                          <div className="flex items-center gap-2">
+                            <span className="text-skull-text-dim text-xs">{formatMcap(token.marketCapUsd || 0)}</span>
+                            <button
+                              onClick={(e) => copyToClipboard(token.mint, e)}
+                              className={`px-1.5 py-0.5 text-[9px] border rounded transition-all ${
+                                copiedCA === token.mint
+                                  ? 'bg-green-500/20 border-green-500 text-green-500'
+                                  : 'border-skull-border text-skull-text-dim hover:border-skull-blood hover:text-skull-blood'
+                              }`}
+                            >
+                              {copiedCA === token.mint ? 'COPIED!' : 'COPY'}
+                            </button>
+                          </div>
                         </div>
                       ))}
                     </div>
