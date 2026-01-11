@@ -12,8 +12,64 @@ export async function GET(
 
   console.log('[API] Fetching token:', ca)
 
-  // List of API endpoints to try
-  const endpoints = [
+  // Try DexScreener first (most reliable)
+  try {
+    console.log('[API] Trying DexScreener...')
+    const dexResponse = await fetch(`https://api.dexscreener.com/latest/dex/tokens/${ca}`, {
+      headers: { 'Accept': 'application/json' },
+      cache: 'no-store',
+      signal: AbortSignal.timeout(10000)
+    })
+
+    if (dexResponse.ok) {
+      const dexData = await dexResponse.json()
+      if (dexData.pairs && dexData.pairs.length > 0) {
+        const pair = dexData.pairs[0]
+        console.log('[API] Success from DexScreener')
+
+        const tokenData = {
+          mint: ca,
+          name: pair.baseToken?.name || 'Unknown',
+          symbol: pair.baseToken?.symbol || '???',
+          description: '',
+          image: pair.info?.imageUrl || '',
+          twitter: pair.info?.socials?.find((s: any) => s.type === 'twitter')?.url || null,
+          telegram: pair.info?.socials?.find((s: any) => s.type === 'telegram')?.url || null,
+          website: pair.info?.websites?.[0]?.url || null,
+          showName: true,
+          createdOn: pair.pairCreatedAt ? new Date(pair.pairCreatedAt).toISOString() : '',
+          marketCap: pair.marketCap || 0,
+          usdMarketCap: pair.marketCap || pair.fdv || 0,
+          bondingCurve: '',
+          associatedBondingCurve: '',
+          creator: '',
+          raydiumPool: pair.pairAddress || null,
+          complete: true, // If on DexScreener, it graduated
+          reply_count: 0,
+          king_of_the_hill_timestamp: null,
+          created_timestamp: pair.pairCreatedAt || null,
+          // Extra DexScreener data
+          priceUsd: pair.priceUsd || '0',
+          priceChange24h: pair.priceChange?.h24 || 0,
+          volume24h: pair.volume?.h24 || 0,
+          liquidity: pair.liquidity?.usd || 0,
+          dexId: pair.dexId || 'unknown'
+        }
+
+        const analysis = analyzeToken(tokenData)
+
+        return NextResponse.json({
+          ...tokenData,
+          analysis
+        })
+      }
+    }
+  } catch (error) {
+    console.log('[API] DexScreener failed:', error)
+  }
+
+  // Try pump.fun APIs as fallback
+  const pumpEndpoints = [
     {
       url: `https://frontend-api.pump.fun/coins/${ca}`,
       headers: {
@@ -30,23 +86,20 @@ export async function GET(
     }
   ]
 
-  let lastError = null
-
-  for (const endpoint of endpoints) {
+  for (const endpoint of pumpEndpoints) {
     try {
       console.log('[API] Trying:', endpoint.url)
 
       const response = await fetch(endpoint.url, {
         headers: endpoint.headers,
         cache: 'no-store',
-        signal: AbortSignal.timeout(10000) // 10 second timeout
+        signal: AbortSignal.timeout(8000)
       })
 
       if (response.ok) {
         const data = await response.json()
         console.log('[API] Success from:', endpoint.url)
 
-        // Transform data to expected format
         const tokenData = {
           mint: data.mint || ca,
           name: data.name || 'Unknown',
@@ -78,17 +131,15 @@ export async function GET(
         })
       } else {
         console.log('[API] Failed:', endpoint.url, response.status)
-        lastError = `HTTP ${response.status}`
       }
     } catch (error) {
       console.error('[API] Error from:', endpoint.url, error)
-      lastError = error instanceof Error ? error.message : 'Unknown error'
     }
   }
 
   // If all endpoints fail, return error
   return NextResponse.json(
-    { error: `Token not found. ${lastError}` },
+    { error: 'Token not found on pump.fun or DexScreener' },
     { status: 404 }
   )
 }
