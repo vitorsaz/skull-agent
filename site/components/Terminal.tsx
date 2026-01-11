@@ -2,55 +2,86 @@
 
 import { useState, useEffect, useRef } from 'react'
 import { motion } from 'framer-motion'
-import {
-  SystemStatus,
-  Token,
-  SniperLog,
-  subscribeToStatus,
-  subscribeToTokens,
-  subscribeToLogs,
-  getSystemStatus,
-  getRecentTokens,
-  getSniperLogs
-} from '@/lib/supabase'
+import { getPumpPortalSocket, LiveToken, calculateScore } from '@/lib/pumpportal'
 import TokenDetails from './TokenDetails'
 
 const SKULL_LOGO_URL = 'https://media.discordapp.net/attachments/1454587961642582039/1459762883562049639/image.png?ex=696475a0&is=69632420&hm=522e0130286a30691dd624369482c5103266686216d3c0945843f54b54de43a4&=&format=webp&quality=lossless'
 
+interface LogEntry {
+  id: string
+  action: string
+  ca: string
+  name: string
+  symbol: string
+  mcap: number
+  score: number
+  status: string
+  timestamp: number
+}
+
 export default function Terminal() {
-  const [status, setStatus] = useState<SystemStatus | null>(null)
-  const [tokens, setTokens] = useState<Token[]>([])
-  const [logs, setLogs] = useState<SniperLog[]>([])
-  const [activeTab, setActiveTab] = useState<'feed' | 'tokens' | 'ca' | 'logs'>('feed')
+  const [wsStatus, setWsStatus] = useState<'connected' | 'disconnected' | 'connecting'>('disconnected')
+  const [tokens, setTokens] = useState<LiveToken[]>([])
+  const [logs, setLogs] = useState<LogEntry[]>([])
+  const [activeTab, setActiveTab] = useState<'feed' | 'tokens' | 'ca' | 'stats'>('feed')
   const [commandInput, setCommandInput] = useState('')
   const [commandHistory, setCommandHistory] = useState<string[]>([])
   const [selectedCA, setSelectedCA] = useState<string | null>(null)
   const [caInput, setCaInput] = useState('')
+  const [stats, setStats] = useState({
+    tokensScanned: 0,
+    excellent: 0,
+    good: 0,
+    risky: 0,
+    avoid: 0
+  })
   const logsEndRef = useRef<HTMLDivElement>(null)
+  const socketRef = useRef<ReturnType<typeof getPumpPortalSocket> | null>(null)
 
   useEffect(() => {
-    getSystemStatus().then(setStatus)
-    getRecentTokens(50).then(setTokens)
-    getSniperLogs(100).then(setLogs)
+    // Connect to PumpPortal WebSocket
+    const socket = getPumpPortalSocket()
+    socketRef.current = socket
 
-    const statusSub = subscribeToStatus(setStatus)
-    const tokensSub = subscribeToTokens((token) => {
+    socket.onStatus(setWsStatus)
+
+    socket.onToken((token) => {
+      // Add to tokens list
       setTokens(prev => {
-        const exists = prev.find(t => t.ca === token.ca)
-        if (exists) {
-          return prev.map(t => t.ca === token.ca ? token : t)
-        }
-        return [token, ...prev.slice(0, 49)]
+        const exists = prev.find(t => t.mint === token.mint)
+        if (exists) return prev
+        return [token, ...prev.slice(0, 99)]
       })
+
+      // Create log entry
+      const logEntry: LogEntry = {
+        id: `${token.mint}-${Date.now()}`,
+        action: 'DETECTED',
+        ca: token.mint,
+        name: token.name,
+        symbol: token.symbol,
+        mcap: token.marketCapUsd || 0,
+        score: token.score || 50,
+        status: token.status || 'SCANNING',
+        timestamp: token.timestamp
+      }
+
+      setLogs(prev => [logEntry, ...prev.slice(0, 199)])
+
+      // Update stats
+      setStats(prev => ({
+        tokensScanned: prev.tokensScanned + 1,
+        excellent: prev.excellent + (token.status === 'EXCELLENT' ? 1 : 0),
+        good: prev.good + (token.status === 'GOOD' ? 1 : 0),
+        risky: prev.risky + (token.status === 'RISKY' ? 1 : 0),
+        avoid: prev.avoid + (token.status === 'AVOID' ? 1 : 0)
+      }))
     })
-    const logsSub = subscribeToLogs((log) => {
-      setLogs(prev => [log, ...prev.slice(0, 99)])
-    })
+
+    socket.connect()
 
     return () => {
-      statusSub.unsubscribe()
-      tokensSub.unsubscribe()
-      logsSub.unsubscribe()
+      socket.disconnect()
     }
   }, [])
 
@@ -71,30 +102,44 @@ export default function Terminal() {
       case 'help':
         response = `
 [COMMANDS]
-  status    - system status
-  tokens    - recent targets
-  logs      - activity logs
+  status    - connection status
+  stats     - scanning statistics
   clear     - clear terminal
   about     - about skull agent
+  reconnect - reconnect websocket
 `
         break
       case 'status':
-        response = status ? `
-[SYSTEM STATUS]
-  Status: ${status.status}
-  Wallet: ${status.wallet_address ? status.wallet_address.slice(0, 8) + '...' : 'disconnected'}
-  Balance: ${status.balance_sol?.toFixed(4) || 0} SOL
-  Sniper: ${status.sniper_enabled ? 'ARMED' : 'SAFE'}
-  Scanned: ${status.tokens_scanned || 0}
-  Executed: ${status.snipes_executed || 0}
-  K/D: ${status.kills || 0}/${status.deaths || 0}
-` : '[ERROR] status unavailable'
+        response = `
+[CONNECTION STATUS]
+  WebSocket: ${wsStatus.toUpperCase()}
+  Tokens in memory: ${tokens.length}
+  Logs: ${logs.length}
+`
+        break
+      case 'stats':
+        response = `
+[SCAN STATISTICS]
+  Total scanned: ${stats.tokensScanned}
+  Excellent: ${stats.excellent}
+  Good: ${stats.good}
+  Risky: ${stats.risky}
+  Avoid: ${stats.avoid}
+`
+        break
+      case 'reconnect':
+        socketRef.current?.disconnect()
+        setTimeout(() => socketRef.current?.connect(), 1000)
+        response = '[RECONNECTING...]'
         break
       case 'about':
         response = `
-[SKULL AGENT v2.0]
-  autonomous sniper for pump.fun
+[SKULL AGENT v3.0]
+  live token scanner for pump.fun
   darkweb edition
+
+  real-time websocket feed
+  autonomous analysis
 
   hunt or be hunted.
 `
@@ -118,7 +163,7 @@ export default function Terminal() {
     }
   }
 
-  const formatTime = (timestamp: string) => {
+  const formatTime = (timestamp: number) => {
     return new Date(timestamp).toLocaleTimeString('en-US', {
       hour12: false,
       hour: '2-digit',
@@ -134,30 +179,12 @@ export default function Terminal() {
     return `$${value.toFixed(0)}`
   }
 
-  const getActionColor = (action: string) => {
-    switch (action) {
-      case 'DETECTED': return 'text-skull-text'
-      case 'APPROVED': return 'text-skull-text-bright'
-      case 'REJECTED': return 'text-skull-text-dim'
-      case 'SNIPING': return 'text-skull-blood'
-      case 'SNIPE_SUCCESS': return 'text-skull-blood-bright blood-glow-subtle'
-      case 'SNIPE_FAILED': return 'text-red-900'
-      case 'TAKE_PROFIT': return 'text-skull-text-bright'
-      case 'STOP_LOSS': return 'text-red-800'
-      default: return 'text-skull-text'
-    }
-  }
-
-  const getStatusColor = (tokenStatus: string) => {
-    switch (tokenStatus?.toLowerCase()) {
-      case 'excellent':
-      case 'good':
-      case 'approved':
-      case 'sniped': return 'text-skull-text-bright border-skull-text-dim'
-      case 'scanning': return 'text-skull-text border-skull-border'
-      case 'risky':
-      case 'avoid':
-      case 'rejected': return 'text-skull-blood border-skull-blood'
+  const getStatusColor = (status: string) => {
+    switch (status?.toUpperCase()) {
+      case 'EXCELLENT': return 'text-skull-text-bright border-skull-text-bright'
+      case 'GOOD': return 'text-skull-text border-skull-text'
+      case 'RISKY': return 'text-skull-blood border-skull-blood'
+      case 'AVOID': return 'text-red-800 border-red-800'
       default: return 'text-skull-text-dim border-skull-border'
     }
   }
@@ -167,6 +194,16 @@ export default function Terminal() {
     if (score >= 65) return { color: 'bg-skull-text', label: 'B' }
     if (score >= 50) return { color: 'bg-skull-blood', label: 'C' }
     return { color: 'bg-red-900', label: 'D' }
+  }
+
+  const getActionEmoji = (status: string) => {
+    switch (status?.toUpperCase()) {
+      case 'EXCELLENT': return '[★]'
+      case 'GOOD': return '[+]'
+      case 'RISKY': return '[!]'
+      case 'AVOID': return '[X]'
+      default: return '[ ]'
+    }
   }
 
   return (
@@ -198,6 +235,15 @@ export default function Terminal() {
               <div className="w-2.5 h-2.5 rounded-full bg-skull-text-dim" />
             </div>
             <span className="text-skull-text-dim text-xs ml-2">skull-agent@darkweb</span>
+            <span className="text-skull-text-dim text-xs ml-auto">
+              {wsStatus === 'connected' ? (
+                <span className="text-skull-blood">● LIVE</span>
+              ) : wsStatus === 'connecting' ? (
+                <span className="text-skull-text-dim">○ CONNECTING...</span>
+              ) : (
+                <span className="text-red-800">○ OFFLINE</span>
+              )}
+            </span>
           </div>
 
           <div className="p-6">
@@ -213,10 +259,10 @@ export default function Terminal() {
                   SKULL AGENT
                 </h1>
                 <p className="text-skull-blood text-sm md:text-base tracking-[0.3em] mt-1">
-                  AUTONOMOUS SNIPER
+                  LIVE TOKEN SCANNER
                 </p>
                 <p className="text-skull-text-dim text-xs mt-2">
-                  pump.fun darkweb terminal
+                  pump.fun darkweb terminal v3.0
                 </p>
               </div>
             </div>
@@ -225,34 +271,32 @@ export default function Terminal() {
             <div className="flex flex-wrap justify-center gap-6 text-xs border-t border-skull-border pt-4">
               <div className="flex items-center gap-2">
                 <span className="text-skull-text-dim">STATUS</span>
-                <span className={status?.status === 'HUNTING' ? 'text-skull-blood' : 'text-skull-text-dim'}>
-                  {status?.status || 'OFFLINE'}
+                <span className={wsStatus === 'connected' ? 'text-skull-blood' : 'text-skull-text-dim'}>
+                  {wsStatus === 'connected' ? 'HUNTING' : wsStatus.toUpperCase()}
                 </span>
                 <motion.span
                   className="text-skull-blood text-[8px]"
                   animate={{ opacity: [1, 0.3, 1] }}
                   transition={{ duration: 1.5, repeat: Infinity }}
                 >
-                  {status?.status === 'HUNTING' ? '●' : '○'}
+                  {wsStatus === 'connected' ? '●' : '○'}
                 </motion.span>
               </div>
               <div className="flex items-center gap-2">
-                <span className="text-skull-text-dim">BAL</span>
-                <span className="text-skull-text">{status?.balance_sol?.toFixed(4) || '0.0000'}</span>
+                <span className="text-skull-text-dim">SCANNED</span>
+                <span className="text-skull-text">{stats.tokensScanned}</span>
               </div>
               <div className="flex items-center gap-2">
-                <span className="text-skull-text-dim">SNIPER</span>
-                <span className={status?.sniper_enabled ? 'text-skull-blood' : 'text-skull-text-dim'}>
-                  {status?.sniper_enabled ? 'ARMED' : 'SAFE'}
-                </span>
+                <span className="text-skull-text-dim">EXCELLENT</span>
+                <span className="text-skull-text-bright">{stats.excellent}</span>
               </div>
               <div className="flex items-center gap-2">
-                <span className="text-skull-text-dim">SCAN</span>
-                <span className="text-skull-text">{status?.tokens_scanned || 0}</span>
+                <span className="text-skull-text-dim">GOOD</span>
+                <span className="text-skull-text">{stats.good}</span>
               </div>
               <div className="flex items-center gap-2">
-                <span className="text-skull-text-dim">K/D</span>
-                <span className="text-skull-text">{status?.kills || 0}/{status?.deaths || 0}</span>
+                <span className="text-skull-text-dim">RISKY</span>
+                <span className="text-skull-blood">{stats.risky}</span>
               </div>
             </div>
           </div>
@@ -268,7 +312,7 @@ export default function Terminal() {
           >
             <div className="terminal-header p-2 flex items-center justify-between">
               <div className="flex gap-1">
-                {['feed', 'tokens', 'ca', 'logs'].map((tab) => (
+                {['feed', 'tokens', 'ca', 'stats'].map((tab) => (
                   <button
                     key={tab}
                     onClick={() => setActiveTab(tab as any)}
@@ -291,30 +335,38 @@ export default function Terminal() {
               {/* LIVE FEED */}
               {activeTab === 'feed' && (
                 <div className="space-y-1">
-                  {logs.slice(0, 50).map((log, i) => (
-                    <motion.div
-                      key={log.id || i}
-                      initial={{ opacity: 0, x: -5 }}
-                      animate={{ opacity: 1, x: 0 }}
-                      className="flex gap-2 hover:bg-skull-border/20 px-1 py-0.5 rounded cursor-pointer"
-                      onClick={() => log.ca && setSelectedCA(log.ca)}
-                    >
-                      <span className="text-skull-text-dim">{formatTime(log.timestamp)}</span>
-                      <span className={getActionColor(log.action)}>{log.action}</span>
-                      <span className="text-skull-text">{log.symbol || '???'}</span>
-                      {log.mcap && <span className="text-skull-text-dim">{formatMcap(log.mcap)}</span>}
-                      {log.score && (
-                        <span className={log.score >= 65 ? 'text-skull-text-bright' : 'text-skull-blood'}>
+                  {logs.length === 0 ? (
+                    <div className="text-skull-text-dim text-center py-8">
+                      <motion.div
+                        animate={{ opacity: [0.5, 1, 0.5] }}
+                        transition={{ duration: 1.5, repeat: Infinity }}
+                      >
+                        waiting for tokens...
+                      </motion.div>
+                    </div>
+                  ) : (
+                    logs.slice(0, 50).map((log, i) => (
+                      <motion.div
+                        key={log.id}
+                        initial={{ opacity: 0, x: -10 }}
+                        animate={{ opacity: 1, x: 0 }}
+                        className="flex gap-2 hover:bg-skull-border/20 px-1 py-0.5 rounded cursor-pointer"
+                        onClick={() => setSelectedCA(log.ca)}
+                      >
+                        <span className="text-skull-text-dim">{formatTime(log.timestamp)}</span>
+                        <span className={getStatusColor(log.status).split(' ')[0]}>{getActionEmoji(log.status)}</span>
+                        <span className="text-skull-text-bright">{log.symbol}</span>
+                        <span className="text-skull-text-dim">{log.name.slice(0, 15)}</span>
+                        <span className="text-skull-text-dim">{formatMcap(log.mcap)}</span>
+                        <span className={`${getStatusColor(log.status).split(' ')[0]}`}>
                           [{log.score}]
                         </span>
-                      )}
-                      {log.pnl_percent !== null && log.pnl_percent !== undefined && (
-                        <span className={log.pnl_percent >= 0 ? 'text-skull-text-bright' : 'text-skull-blood'}>
-                          {log.pnl_percent >= 0 ? '+' : ''}{log.pnl_percent.toFixed(1)}%
+                        <span className={`${getStatusColor(log.status).split(' ')[0]}`}>
+                          {log.status}
                         </span>
-                      )}
-                    </motion.div>
-                  ))}
+                      </motion.div>
+                    ))
+                  )}
                   <div ref={logsEndRef} />
                 </div>
               )}
@@ -322,51 +374,59 @@ export default function Terminal() {
               {/* TOKENS */}
               {activeTab === 'tokens' && (
                 <div className="space-y-2">
-                  {tokens.map((token, i) => {
-                    const scoreInfo = getScoreIndicator(token.score || 0)
-                    return (
-                      <motion.div
-                        key={token.id || i}
-                        initial={{ opacity: 0 }}
-                        animate={{ opacity: 1 }}
-                        className="token-card p-3 rounded cursor-pointer"
-                        onClick={() => setSelectedCA(token.ca)}
-                      >
-                        <div className="flex justify-between items-start">
-                          <div className="flex items-center gap-3">
-                            {token.logo ? (
-                              <img src={token.logo} alt="" className="w-8 h-8 rounded opacity-80" />
-                            ) : (
-                              <div className="w-8 h-8 rounded bg-skull-border flex items-center justify-center text-skull-text-dim text-xs">
-                                ?
+                  {tokens.length === 0 ? (
+                    <div className="text-skull-text-dim text-center py-8">
+                      no tokens detected yet
+                    </div>
+                  ) : (
+                    tokens.map((token, i) => {
+                      const scoreInfo = getScoreIndicator(token.score || 50)
+                      return (
+                        <motion.div
+                          key={token.mint}
+                          initial={{ opacity: 0 }}
+                          animate={{ opacity: 1 }}
+                          className="token-card p-3 rounded cursor-pointer"
+                          onClick={() => setSelectedCA(token.mint)}
+                        >
+                          <div className="flex justify-between items-start">
+                            <div className="flex items-center gap-3">
+                              {token.logo ? (
+                                <img src={token.logo} alt="" className="w-8 h-8 rounded opacity-80" />
+                              ) : (
+                                <div className="w-8 h-8 rounded bg-skull-border flex items-center justify-center text-skull-text-dim text-xs">
+                                  ?
+                                </div>
+                              )}
+                              <div>
+                                <div className="flex items-center gap-2">
+                                  <span className="text-skull-text-bright font-medium">{token.symbol}</span>
+                                  <span className={`text-[10px] px-1.5 py-0.5 border rounded ${getStatusColor(token.status || '')}`}>
+                                    {token.status}
+                                  </span>
+                                </div>
+                                <span className="text-skull-text-dim text-xs">{token.name?.slice(0, 20)}</span>
                               </div>
-                            )}
-                            <div>
-                              <div className="flex items-center gap-2">
-                                <span className="text-skull-text-bright font-medium">{token.simbolo}</span>
-                                <span className={`text-[10px] px-1.5 py-0.5 border rounded ${getStatusColor(token.status)}`}>
-                                  {token.status?.toUpperCase()}
-                                </span>
-                              </div>
-                              <span className="text-skull-text-dim text-xs">{token.nome?.slice(0, 20)}</span>
                             </div>
-                          </div>
-                          <div className="text-right">
-                            <div className="text-skull-text">{formatMcap(token.market_cap || 0)}</div>
-                            {token.score > 0 && (
+                            <div className="text-right">
+                              <div className="text-skull-text">{formatMcap(token.marketCapUsd || 0)}</div>
                               <div className="flex items-center gap-1 justify-end mt-1">
                                 <div className={`w-1.5 h-1.5 rounded-full ${scoreInfo.color}`} />
                                 <span className="text-skull-text-dim text-[10px]">{token.score}</span>
                               </div>
-                            )}
+                            </div>
                           </div>
-                        </div>
-                        <div className="text-skull-text-dim text-[10px] mt-2 font-mono truncate">
-                          {token.ca}
-                        </div>
-                      </motion.div>
-                    )
-                  })}
+                          <div className="text-skull-text-dim text-[10px] mt-2 font-mono truncate">
+                            {token.mint}
+                          </div>
+                          <div className="flex gap-4 mt-2 text-[10px] text-skull-text-dim">
+                            <span>Initial: {(token.initialBuy / 1e9).toFixed(2)} SOL</span>
+                            <span>Liq: {(token.vSolInBondingCurve / 1e9).toFixed(2)} SOL</span>
+                          </div>
+                        </motion.div>
+                      )
+                    })
+                  )}
                 </div>
               )}
 
@@ -402,20 +462,20 @@ export default function Terminal() {
                   </form>
 
                   <div className="border-t border-skull-border pt-4">
-                    <h4 className="text-skull-text-dim text-xs mb-2">RECENT</h4>
+                    <h4 className="text-skull-text-dim text-xs mb-2">RECENT DETECTIONS</h4>
                     <div className="space-y-1">
-                      {tokens.slice(0, 5).map((token, i) => (
+                      {tokens.slice(0, 8).map((token) => (
                         <div
-                          key={i}
-                          onClick={() => setSelectedCA(token.ca)}
+                          key={token.mint}
+                          onClick={() => setSelectedCA(token.mint)}
                           className="flex items-center justify-between p-2 border border-skull-border rounded hover:border-skull-blood/50 cursor-pointer transition-colors"
                         >
                           <div className="flex items-center gap-2">
-                            <div className={`w-1.5 h-1.5 rounded-full ${getScoreIndicator(token.score || 0).color}`} />
-                            <span className="text-skull-text text-xs">{token.simbolo}</span>
-                            <span className="text-skull-text-dim text-[10px]">{token.ca?.slice(0, 6)}...{token.ca?.slice(-4)}</span>
+                            <div className={`w-1.5 h-1.5 rounded-full ${getScoreIndicator(token.score || 50).color}`} />
+                            <span className="text-skull-text text-xs">{token.symbol}</span>
+                            <span className="text-skull-text-dim text-[10px]">{token.mint?.slice(0, 6)}...{token.mint?.slice(-4)}</span>
                           </div>
-                          <span className="text-skull-text-dim text-xs">{formatMcap(token.market_cap || 0)}</span>
+                          <span className="text-skull-text-dim text-xs">{formatMcap(token.marketCapUsd || 0)}</span>
                         </div>
                       ))}
                     </div>
@@ -423,31 +483,59 @@ export default function Terminal() {
                 </div>
               )}
 
-              {/* LOGS */}
-              {activeTab === 'logs' && (
-                <div className="space-y-0.5">
-                  {logs.map((log, i) => (
-                    <div
-                      key={log.id || i}
-                      className="text-skull-text-dim hover:bg-skull-border/20 px-1 py-0.5 rounded cursor-pointer text-[11px]"
-                      onClick={() => log.ca && setSelectedCA(log.ca)}
-                    >
-                      <span className="text-skull-text-dim">{formatTime(log.timestamp)}</span>
-                      {' '}<span className={getActionColor(log.action)}>{log.action}</span>
-                      {' '}<span className="text-skull-text">{log.ca?.slice(0, 6)}...</span>
-                      {log.tx_signature && (
-                        <a
-                          href={`https://solscan.io/tx/${log.tx_signature}`}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="text-skull-blood ml-2"
-                          onClick={(e) => e.stopPropagation()}
-                        >
-                          [TX]
-                        </a>
-                      )}
+              {/* STATS */}
+              {activeTab === 'stats' && (
+                <div className="space-y-4">
+                  <div className="text-center py-4">
+                    <h3 className="text-skull-text-bright text-sm mb-4">SCAN STATISTICS</h3>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="bg-void border border-skull-border rounded-lg p-4 text-center">
+                      <div className="text-2xl font-bold text-skull-text-bright">{stats.tokensScanned}</div>
+                      <div className="text-[10px] text-skull-text-dim mt-1">TOTAL SCANNED</div>
                     </div>
-                  ))}
+                    <div className="bg-void border border-skull-border rounded-lg p-4 text-center">
+                      <div className="text-2xl font-bold text-skull-text-bright">{stats.excellent}</div>
+                      <div className="text-[10px] text-skull-text-dim mt-1">EXCELLENT</div>
+                    </div>
+                    <div className="bg-void border border-skull-border rounded-lg p-4 text-center">
+                      <div className="text-2xl font-bold text-skull-text">{stats.good}</div>
+                      <div className="text-[10px] text-skull-text-dim mt-1">GOOD</div>
+                    </div>
+                    <div className="bg-void border border-skull-border rounded-lg p-4 text-center">
+                      <div className="text-2xl font-bold text-skull-blood">{stats.risky}</div>
+                      <div className="text-[10px] text-skull-text-dim mt-1">RISKY</div>
+                    </div>
+                    <div className="bg-void border border-skull-border rounded-lg p-4 text-center col-span-2">
+                      <div className="text-2xl font-bold text-red-800">{stats.avoid}</div>
+                      <div className="text-[10px] text-skull-text-dim mt-1">AVOID</div>
+                    </div>
+                  </div>
+
+                  <div className="border-t border-skull-border pt-4">
+                    <h4 className="text-skull-text-dim text-xs mb-2">SCORE BREAKDOWN</h4>
+                    <div className="space-y-2 text-[11px]">
+                      <div className="flex justify-between">
+                        <span className="text-skull-text-dim">Excellent rate:</span>
+                        <span className="text-skull-text-bright">
+                          {stats.tokensScanned > 0 ? ((stats.excellent / stats.tokensScanned) * 100).toFixed(1) : 0}%
+                        </span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-skull-text-dim">Good+ rate:</span>
+                        <span className="text-skull-text">
+                          {stats.tokensScanned > 0 ? (((stats.excellent + stats.good) / stats.tokensScanned) * 100).toFixed(1) : 0}%
+                        </span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-skull-text-dim">Avoid rate:</span>
+                        <span className="text-skull-blood">
+                          {stats.tokensScanned > 0 ? ((stats.avoid / stats.tokensScanned) * 100).toFixed(1) : 0}%
+                        </span>
+                      </div>
+                    </div>
+                  </div>
                 </div>
               )}
             </div>
@@ -498,49 +586,33 @@ export default function Terminal() {
           </motion.div>
         </div>
 
-        {/* Stats bar */}
+        {/* Live indicator */}
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           className="mt-4 terminal rounded-lg p-4"
         >
-          <div className="grid grid-cols-2 md:grid-cols-5 gap-4 text-center text-xs">
-            <div>
-              <div className="text-skull-text-dim text-[10px]">SCANNED</div>
-              <div className="text-skull-text text-lg">{status?.tokens_scanned || 0}</div>
+          <div className="flex items-center justify-center gap-4 text-xs">
+            <div className="flex items-center gap-2">
+              <motion.div
+                className={`w-2 h-2 rounded-full ${wsStatus === 'connected' ? 'bg-skull-blood' : 'bg-skull-text-dim'}`}
+                animate={wsStatus === 'connected' ? { opacity: [1, 0.3, 1] } : {}}
+                transition={{ duration: 1, repeat: Infinity }}
+              />
+              <span className={wsStatus === 'connected' ? 'text-skull-blood' : 'text-skull-text-dim'}>
+                {wsStatus === 'connected' ? 'LIVE FEED ACTIVE' : 'CONNECTING TO PUMPPORTAL...'}
+              </span>
             </div>
-            <div>
-              <div className="text-skull-text-dim text-[10px]">EXECUTED</div>
-              <div className="text-skull-blood text-lg">{status?.snipes_executed || 0}</div>
-            </div>
-            <div>
-              <div className="text-skull-text-dim text-[10px]">KILL RATE</div>
-              <div className="text-skull-text-bright text-lg">
-                {status?.kills && status?.snipes_executed
-                  ? ((status.kills / status.snipes_executed) * 100).toFixed(0)
-                  : 0}%
-              </div>
-            </div>
-            <div>
-              <div className="text-skull-text-dim text-[10px]">PNL</div>
-              <div className={`text-lg ${(status?.total_pnl || 0) >= 0 ? 'text-skull-text-bright' : 'text-skull-blood'}`}>
-                {(status?.total_pnl || 0) >= 0 ? '+' : ''}{(status?.total_pnl || 0).toFixed(1)}%
-              </div>
-            </div>
-            <div>
-              <div className="text-skull-text-dim text-[10px]">LAST UPDATE</div>
-              <div className="text-skull-text text-lg">
-                {status?.updated_at
-                  ? Math.floor((Date.now() - new Date(status.updated_at).getTime()) / 60000) + 'm'
-                  : '--'}
-              </div>
-            </div>
+            <span className="text-skull-text-dim">|</span>
+            <span className="text-skull-text-dim">{tokens.length} tokens in memory</span>
+            <span className="text-skull-text-dim">|</span>
+            <span className="text-skull-text">{stats.tokensScanned} scanned</span>
           </div>
         </motion.div>
 
         {/* Footer */}
         <div className="mt-4 text-center text-[10px] text-skull-text-dim">
-          <span>SKULL AGENT v2.0</span>
+          <span>SKULL AGENT v3.0</span>
           <span className="mx-2">|</span>
           <span>darkweb edition</span>
           <span className="mx-2">|</span>

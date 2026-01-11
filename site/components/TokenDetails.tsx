@@ -2,7 +2,6 @@
 
 import { useState, useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Token, SniperLog, supabase } from '@/lib/supabase'
 import { X, ExternalLink, Copy, Check } from 'lucide-react'
 
 interface TokenDetailsProps {
@@ -10,11 +9,31 @@ interface TokenDetailsProps {
   onClose: () => void
 }
 
+interface TokenData {
+  mint: string
+  name: string
+  symbol: string
+  description: string
+  image: string
+  twitter?: string
+  telegram?: string
+  website?: string
+  showName: boolean
+  createdOn: string
+  marketCap?: number
+  usdMarketCap?: number
+  bondingCurve?: string
+  associatedBondingCurve?: string
+  creator?: string
+  raydiumPool?: string
+  complete?: boolean
+}
+
 export default function TokenDetails({ ca, onClose }: TokenDetailsProps) {
-  const [token, setToken] = useState<Token | null>(null)
-  const [logs, setLogs] = useState<SniperLog[]>([])
+  const [token, setToken] = useState<TokenData | null>(null)
   const [loading, setLoading] = useState(true)
   const [copied, setCopied] = useState(false)
+  const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
     fetchTokenData()
@@ -22,23 +41,24 @@ export default function TokenDetails({ ca, onClose }: TokenDetailsProps) {
 
   async function fetchTokenData() {
     setLoading(true)
+    setError(null)
 
-    const { data: tokenData } = await supabase
-      .from('tokens')
-      .select('*')
-      .eq('ca', ca)
-      .single()
+    try {
+      // Fetch from pump.fun API
+      const response = await fetch(`https://frontend-api.pump.fun/coins/${ca}`)
 
-    const { data: logsData } = await supabase
-      .from('sniper_logs')
-      .select('*')
-      .eq('ca', ca)
-      .order('timestamp', { ascending: false })
-      .limit(20)
+      if (!response.ok) {
+        throw new Error('Token not found')
+      }
 
-    setToken(tokenData)
-    setLogs(logsData || [])
-    setLoading(false)
+      const data = await response.json()
+      setToken(data)
+    } catch (err) {
+      console.error('Error fetching token:', err)
+      setError('Failed to fetch token data')
+    } finally {
+      setLoading(false)
+    }
   }
 
   const copyToClipboard = () => {
@@ -47,55 +67,19 @@ export default function TokenDetails({ ca, onClose }: TokenDetailsProps) {
     setTimeout(() => setCopied(false), 2000)
   }
 
-  const getStatusColor = (status: string) => {
-    switch (status?.toLowerCase()) {
-      case 'excellent':
-      case 'good':
-      case 'approved':
-      case 'sniped': return 'text-skull-text-bright'
-      case 'risky':
-      case 'avoid':
-      case 'rejected': return 'text-skull-blood'
-      default: return 'text-skull-text'
-    }
-  }
-
-  const getScoreColor = (score: number) => {
-    if (score >= 80) return 'text-skull-text-bright'
-    if (score >= 65) return 'text-skull-text'
-    if (score >= 50) return 'text-skull-blood'
-    return 'text-red-800'
-  }
-
-  const formatMcap = (value: number) => {
+  const formatMcap = (value: number | undefined) => {
     if (!value) return '$0'
     if (value >= 1_000_000) return `$${(value / 1_000_000).toFixed(2)}M`
     if (value >= 1_000) return `$${(value / 1_000).toFixed(2)}K`
     return `$${value.toFixed(2)}`
   }
 
-  const formatTime = (timestamp: string) => {
-    return new Date(timestamp).toLocaleString('en-US', {
-      month: 'short',
-      day: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit',
-      second: '2-digit'
-    })
-  }
-
-  const getActionEmoji = (action: string) => {
-    switch (action) {
-      case 'DETECTED': return '[ ]'
-      case 'APPROVED': return '[+]'
-      case 'REJECTED': return '[x]'
-      case 'SNIPING': return '[>]'
-      case 'SNIPE_SUCCESS': return '[*]'
-      case 'SNIPE_FAILED': return '[!]'
-      case 'TAKE_PROFIT': return '[$]'
-      case 'STOP_LOSS': return '[-]'
-      default: return '[ ]'
-    }
+  const getScoreColor = (mcap: number | undefined) => {
+    if (!mcap) return 'text-skull-text-dim'
+    if (mcap >= 100000) return 'text-skull-text-bright'
+    if (mcap >= 50000) return 'text-skull-text'
+    if (mcap >= 10000) return 'text-skull-blood'
+    return 'text-red-800'
   }
 
   return (
@@ -119,8 +103,8 @@ export default function TokenDetails({ ca, onClose }: TokenDetailsProps) {
             <div className="flex items-center gap-2">
               <span className="text-skull-text-dim text-xs">TOKEN</span>
               <span className="text-skull-text-dim">|</span>
-              <span className={`text-xs ${getStatusColor(token?.status || '')}`}>
-                {token?.status?.toUpperCase() || 'LOADING'}
+              <span className="text-skull-blood text-xs">
+                {loading ? 'LOADING' : token ? 'FOUND' : 'NOT FOUND'}
               </span>
             </div>
             <button
@@ -140,17 +124,25 @@ export default function TokenDetails({ ca, onClose }: TokenDetailsProps) {
               >
                 ...
               </motion.div>
-              <p className="text-skull-text-dim mt-2 text-xs">loading</p>
+              <p className="text-skull-text-dim mt-2 text-xs">fetching from pump.fun</p>
+            </div>
+          ) : error ? (
+            <div className="p-8 text-center">
+              <p className="text-skull-blood text-xs">{error}</p>
+              <p className="text-skull-text-dim text-xs mt-2">CA: {ca.slice(0, 20)}...</p>
             </div>
           ) : token ? (
             <div className="p-4 overflow-y-auto max-h-[calc(90vh-60px)]">
               {/* Token Info */}
               <div className="flex items-start gap-4 mb-6">
-                {token.logo ? (
+                {token.image ? (
                   <img
-                    src={token.logo}
-                    alt={token.simbolo}
+                    src={token.image}
+                    alt={token.symbol}
                     className="w-14 h-14 rounded-lg border border-skull-border opacity-80"
+                    onError={(e) => {
+                      (e.target as HTMLImageElement).style.display = 'none'
+                    }}
                   />
                 ) : (
                   <div className="w-14 h-14 rounded-lg border border-skull-border flex items-center justify-center text-skull-text-dim text-xl">
@@ -159,19 +151,32 @@ export default function TokenDetails({ ca, onClose }: TokenDetailsProps) {
                 )}
                 <div className="flex-1">
                   <h2 className="text-lg text-skull-text-bright font-bold">
-                    {token.nome}
+                    {token.name}
                   </h2>
-                  <p className="text-skull-text-dim text-sm">${token.simbolo}</p>
+                  <p className="text-skull-text-dim text-sm">${token.symbol}</p>
+                  {token.complete && (
+                    <span className="text-[10px] px-2 py-0.5 bg-skull-blood/20 border border-skull-blood text-skull-blood rounded mt-1 inline-block">
+                      GRADUATED
+                    </span>
+                  )}
                 </div>
-                {token.score > 0 && (
-                  <div className="text-center">
-                    <div className={`text-2xl font-bold ${getScoreColor(token.score)}`}>
-                      {token.score}
-                    </div>
-                    <div className="text-[10px] text-skull-text-dim">SCORE</div>
+                <div className="text-center">
+                  <div className={`text-2xl font-bold ${getScoreColor(token.usdMarketCap)}`}>
+                    {formatMcap(token.usdMarketCap)}
                   </div>
-                )}
+                  <div className="text-[10px] text-skull-text-dim">MCAP</div>
+                </div>
               </div>
+
+              {/* Description */}
+              {token.description && (
+                <div className="bg-void border border-skull-border rounded-lg p-3 mb-4">
+                  <p className="text-skull-text-dim text-xs leading-relaxed">
+                    {token.description.slice(0, 200)}
+                    {token.description.length > 200 && '...'}
+                  </p>
+                </div>
+              )}
 
               {/* CA Box */}
               <div className="bg-void border border-skull-border rounded-lg p-3 mb-6">
@@ -200,81 +205,67 @@ export default function TokenDetails({ ca, onClose }: TokenDetailsProps) {
               </div>
 
               {/* Stats Grid */}
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mb-6">
+              <div className="grid grid-cols-2 gap-2 mb-6">
                 <div className="bg-void border border-skull-border rounded-lg p-3">
-                  <div className="text-skull-text-dim text-[10px] mb-1">MCAP</div>
+                  <div className="text-skull-text-dim text-[10px] mb-1">USD MCAP</div>
                   <div className="text-skull-text text-sm font-medium">
-                    {formatMcap(token.market_cap)}
-                  </div>
-                </div>
-                <div className="bg-void border border-skull-border rounded-lg p-3">
-                  <div className="text-skull-text-dim text-[10px] mb-1">LIQUIDITY</div>
-                  <div className="text-skull-text text-sm font-medium">
-                    {formatMcap(token.liquidity)}
-                  </div>
-                </div>
-                <div className="bg-void border border-skull-border rounded-lg p-3">
-                  <div className="text-skull-text-dim text-[10px] mb-1">HOLDERS</div>
-                  <div className="text-skull-text text-sm font-medium">
-                    {token.holders || 0}
+                    {formatMcap(token.usdMarketCap)}
                   </div>
                 </div>
                 <div className="bg-void border border-skull-border rounded-lg p-3">
                   <div className="text-skull-text-dim text-[10px] mb-1">STATUS</div>
-                  <div className={`text-sm font-medium ${getStatusColor(token.status)}`}>
-                    {token.status?.toUpperCase()}
+                  <div className={`text-sm font-medium ${token.complete ? 'text-skull-text-bright' : 'text-skull-blood'}`}>
+                    {token.complete ? 'GRADUATED' : 'BONDING'}
                   </div>
                 </div>
+                {token.creator && (
+                  <div className="bg-void border border-skull-border rounded-lg p-3 col-span-2">
+                    <div className="text-skull-text-dim text-[10px] mb-1">CREATOR</div>
+                    <div className="text-skull-text text-xs font-mono truncate">
+                      {token.creator}
+                    </div>
+                  </div>
+                )}
               </div>
 
-              {/* Reject Reason */}
-              {token.reject_reason && (
-                <div className="bg-skull-blood/10 border border-skull-blood/30 rounded-lg p-3 mb-6">
-                  <p className="text-skull-blood text-xs">
-                    <span className="font-bold">REJECTED:</span> {token.reject_reason}
-                  </p>
+              {/* Social Links */}
+              {(token.twitter || token.telegram || token.website) && (
+                <div className="border border-skull-border rounded-lg p-3 mb-6">
+                  <div className="text-skull-text-dim text-[10px] mb-2">SOCIALS</div>
+                  <div className="flex gap-2 flex-wrap">
+                    {token.twitter && (
+                      <a
+                        href={token.twitter}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="px-3 py-1 border border-skull-border rounded hover:border-skull-blood text-skull-text-dim text-xs transition-colors"
+                      >
+                        TWITTER
+                      </a>
+                    )}
+                    {token.telegram && (
+                      <a
+                        href={token.telegram}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="px-3 py-1 border border-skull-border rounded hover:border-skull-blood text-skull-text-dim text-xs transition-colors"
+                      >
+                        TELEGRAM
+                      </a>
+                    )}
+                    {token.website && (
+                      <a
+                        href={token.website}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="px-3 py-1 border border-skull-border rounded hover:border-skull-blood text-skull-text-dim text-xs transition-colors"
+                      >
+                        WEBSITE
+                      </a>
+                    )}
+                  </div>
                 </div>
               )}
-
-              {/* Activity Log */}
-              <div className="border border-skull-border rounded-lg overflow-hidden">
-                <div className="bg-dark px-3 py-2 border-b border-skull-border">
-                  <span className="text-skull-text-dim text-xs">ACTIVITY LOG</span>
-                </div>
-                <div className="max-h-40 overflow-y-auto">
-                  {logs.length > 0 ? (
-                    logs.map((log, i) => (
-                      <div
-                        key={log.id || i}
-                        className="px-3 py-2 border-b border-skull-border/50 last:border-0 text-[11px]"
-                      >
-                        <div className="flex items-center gap-2">
-                          <span className="text-skull-text-dim">{getActionEmoji(log.action)}</span>
-                          <span className="text-skull-text">{log.action}</span>
-                          <span className="text-skull-text-dim ml-auto">{formatTime(log.timestamp)}</span>
-                        </div>
-                        {log.reason && (
-                          <p className="text-skull-text-dim mt-1 pl-6">{log.reason}</p>
-                        )}
-                        {log.tx_signature && (
-                          <a
-                            href={`https://solscan.io/tx/${log.tx_signature}`}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="text-skull-blood hover:underline mt-1 pl-6 block"
-                          >
-                            TX: {log.tx_signature.slice(0, 12)}...
-                          </a>
-                        )}
-                      </div>
-                    ))
-                  ) : (
-                    <div className="p-4 text-center text-skull-text-dim text-xs">
-                      no activity
-                    </div>
-                  )}
-                </div>
-              </div>
 
               {/* Quick Links */}
               <div className="flex gap-2 mt-4">
@@ -303,6 +294,18 @@ export default function TokenDetails({ ca, onClose }: TokenDetailsProps) {
                   BIRDEYE
                 </a>
               </div>
+
+              {/* Raydium link if graduated */}
+              {token.raydiumPool && (
+                <a
+                  href={`https://raydium.io/swap/?inputMint=sol&outputMint=${ca}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="block w-full text-center py-2 mt-2 bg-skull-blood/20 border border-skull-blood rounded hover:bg-skull-blood/30 text-skull-blood text-xs transition-colors"
+                >
+                  TRADE ON RAYDIUM
+                </a>
+              )}
             </div>
           ) : (
             <div className="p-8 text-center">
