@@ -21,6 +21,20 @@ export interface LiveToken {
   logo?: string
 }
 
+export interface TradeUpdate {
+  mint: string
+  txType: 'buy' | 'sell'
+  tokenAmount: number
+  solAmount: number
+  marketCapSol: number
+  marketCapUsd: number
+  vSolInBondingCurve: number
+  vTokensInBondingCurve: number
+  traderPublicKey: string
+  signature: string
+  timestamp: number
+}
+
 export interface TokenMetadata {
   name: string
   symbol: string
@@ -92,7 +106,9 @@ export class PumpPortalSocket {
   private ws: WebSocket | null = null
   private reconnectAttempts = 0
   private maxReconnects = 5
+  private subscribedTokens: Set<string> = new Set()
   private onTokenCallback: ((token: LiveToken) => void) | null = null
+  private onTradeCallback: ((trade: TradeUpdate) => void) | null = null
   private onStatusCallback: ((status: 'connected' | 'disconnected' | 'connecting') => void) | null = null
 
   connect() {
@@ -110,6 +126,15 @@ export class PumpPortalSocket {
 
         // Subscribe to new tokens
         this.ws?.send(JSON.stringify({ method: 'subscribeNewToken' }))
+
+        // Re-subscribe to previously tracked tokens
+        if (this.subscribedTokens.size > 0) {
+          const tokens = Array.from(this.subscribedTokens)
+          this.ws?.send(JSON.stringify({
+            method: 'subscribeTokenTrade',
+            keys: tokens
+          }))
+        }
       }
 
       this.ws.onmessage = async (event) => {
@@ -149,7 +174,28 @@ export class PumpPortalSocket {
               })
             }
 
+            // Auto-subscribe to this token's trades
+            this.subscribeToToken(token.mint)
+
             this.onTokenCallback?.(token)
+          }
+          // Check if it's a trade event (buy/sell)
+          else if ((data.txType === 'buy' || data.txType === 'sell') && data.mint) {
+            const trade: TradeUpdate = {
+              mint: data.mint,
+              txType: data.txType,
+              tokenAmount: data.tokenAmount || 0,
+              solAmount: data.solAmount || 0,
+              marketCapSol: data.marketCapSol || 0,
+              marketCapUsd: (data.marketCapSol || 0) * SOL_PRICE_USD,
+              vSolInBondingCurve: data.vSolInBondingCurve || 0,
+              vTokensInBondingCurve: data.vTokensInBondingCurve || 0,
+              traderPublicKey: data.traderPublicKey || '',
+              signature: data.signature || '',
+              timestamp: Date.now()
+            }
+
+            this.onTradeCallback?.(trade)
           }
         } catch (err) {
           console.error('[SKULL] Parse error:', err)
@@ -173,6 +219,38 @@ export class PumpPortalSocket {
     }
   }
 
+  subscribeToToken(mint: string) {
+    if (this.subscribedTokens.has(mint)) return
+
+    // Limit subscriptions to avoid overload
+    if (this.subscribedTokens.size >= 50) {
+      // Remove oldest subscription
+      const oldest = this.subscribedTokens.values().next().value
+      this.subscribedTokens.delete(oldest)
+    }
+
+    this.subscribedTokens.add(mint)
+
+    if (this.ws?.readyState === WebSocket.OPEN) {
+      this.ws.send(JSON.stringify({
+        method: 'subscribeTokenTrade',
+        keys: [mint]
+      }))
+      console.log('[SKULL] Subscribed to trades for:', mint.slice(0, 8))
+    }
+  }
+
+  unsubscribeFromToken(mint: string) {
+    this.subscribedTokens.delete(mint)
+
+    if (this.ws?.readyState === WebSocket.OPEN) {
+      this.ws.send(JSON.stringify({
+        method: 'unsubscribeTokenTrade',
+        keys: [mint]
+      }))
+    }
+  }
+
   private attemptReconnect() {
     if (this.reconnectAttempts >= this.maxReconnects) {
       console.log('[SKULL] Max reconnection attempts reached')
@@ -188,6 +266,10 @@ export class PumpPortalSocket {
 
   onToken(callback: (token: LiveToken) => void) {
     this.onTokenCallback = callback
+  }
+
+  onTrade(callback: (trade: TradeUpdate) => void) {
+    this.onTradeCallback = callback
   }
 
   onStatus(callback: (status: 'connected' | 'disconnected' | 'connecting') => void) {

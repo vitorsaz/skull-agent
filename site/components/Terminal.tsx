@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef } from 'react'
 import { motion } from 'framer-motion'
-import { getPumpPortalSocket, LiveToken, calculateScore } from '@/lib/pumpportal'
+import { getPumpPortalSocket, LiveToken, TradeUpdate, calculateScore } from '@/lib/pumpportal'
 import TokenDetails from './TokenDetails'
 
 const SKULL_LOGO_URL = 'https://media.discordapp.net/attachments/1454587961642582039/1459762883562049639/image.png?ex=696475a0&is=69632420&hm=522e0130286a30691dd624369482c5103266686216d3c0945843f54b54de43a4&=&format=webp&quality=lossless'
@@ -33,7 +33,8 @@ export default function Terminal() {
     excellent: 0,
     good: 0,
     risky: 0,
-    avoid: 0
+    avoid: 0,
+    trades: 0
   })
   const logsEndRef = useRef<HTMLDivElement>(null)
   const socketRef = useRef<ReturnType<typeof getPumpPortalSocket> | null>(null)
@@ -76,6 +77,45 @@ export default function Terminal() {
         risky: prev.risky + (token.status === 'RISKY' ? 1 : 0),
         avoid: prev.avoid + (token.status === 'AVOID' ? 1 : 0)
       }))
+    })
+
+    // Handle trade updates for real-time market cap
+    socket.onTrade((trade: TradeUpdate) => {
+      setTokens(prev => prev.map(token => {
+        if (token.mint === trade.mint) {
+          return {
+            ...token,
+            marketCapSol: trade.marketCapSol,
+            marketCapUsd: trade.marketCapUsd,
+            vSolInBondingCurve: trade.vSolInBondingCurve,
+            vTokensInBondingCurve: trade.vTokensInBondingCurve
+          }
+        }
+        return token
+      }))
+
+      // Update trades count
+      setStats(prev => ({ ...prev, trades: prev.trades + 1 }))
+
+      // Add trade to logs
+      setLogs(prev => {
+        const token = prev.find(l => l.ca === trade.mint)
+        if (token) {
+          const tradeLog: LogEntry = {
+            id: `${trade.mint}-${Date.now()}-trade`,
+            action: trade.txType.toUpperCase(),
+            ca: trade.mint,
+            name: token.name,
+            symbol: token.symbol,
+            mcap: trade.marketCapUsd,
+            score: token.score,
+            status: token.status,
+            timestamp: trade.timestamp
+          }
+          return [tradeLog, ...prev.slice(0, 199)]
+        }
+        return prev
+      })
     })
 
     socket.connect()
@@ -196,13 +236,25 @@ export default function Terminal() {
     return { color: 'bg-red-900', label: 'D' }
   }
 
-  const getActionEmoji = (status: string) => {
-    switch (status?.toUpperCase()) {
+  const getActionEmoji = (action: string) => {
+    switch (action?.toUpperCase()) {
+      case 'DETECTED': return '[◆]'
+      case 'BUY': return '[▲]'
+      case 'SELL': return '[▼]'
       case 'EXCELLENT': return '[★]'
       case 'GOOD': return '[+]'
       case 'RISKY': return '[!]'
       case 'AVOID': return '[X]'
       default: return '[ ]'
+    }
+  }
+
+  const getActionColor = (action: string) => {
+    switch (action?.toUpperCase()) {
+      case 'DETECTED': return 'text-skull-text-bright'
+      case 'BUY': return 'text-green-500'
+      case 'SELL': return 'text-skull-blood'
+      default: return 'text-skull-text-dim'
     }
   }
 
@@ -298,6 +350,10 @@ export default function Terminal() {
                 <span className="text-skull-text-dim">RISKY</span>
                 <span className="text-skull-blood">{stats.risky}</span>
               </div>
+              <div className="flex items-center gap-2">
+                <span className="text-skull-text-dim">TRADES</span>
+                <span className="text-green-500">{stats.trades}</span>
+              </div>
             </div>
           </div>
         </motion.div>
@@ -354,16 +410,18 @@ export default function Terminal() {
                         onClick={() => setSelectedCA(log.ca)}
                       >
                         <span className="text-skull-text-dim">{formatTime(log.timestamp)}</span>
-                        <span className={getStatusColor(log.status).split(' ')[0]}>{getActionEmoji(log.status)}</span>
+                        <span className={getActionColor(log.action)}>{getActionEmoji(log.action)}</span>
+                        <span className={getActionColor(log.action)}>{log.action}</span>
                         <span className="text-skull-text-bright">{log.symbol}</span>
-                        <span className="text-skull-text-dim">{log.name.slice(0, 15)}</span>
-                        <span className="text-skull-text-dim">{formatMcap(log.mcap)}</span>
-                        <span className={`${getStatusColor(log.status).split(' ')[0]}`}>
-                          [{log.score}]
+                        <span className="text-skull-text-dim truncate max-w-[80px]">{log.name}</span>
+                        <span className={log.action === 'BUY' ? 'text-green-500' : log.action === 'SELL' ? 'text-skull-blood' : 'text-skull-text-dim'}>
+                          {formatMcap(log.mcap)}
                         </span>
-                        <span className={`${getStatusColor(log.status).split(' ')[0]}`}>
-                          {log.status}
-                        </span>
+                        {log.action === 'DETECTED' && (
+                          <span className={`${getStatusColor(log.status).split(' ')[0]}`}>
+                            [{log.score}] {log.status}
+                          </span>
+                        )}
                       </motion.div>
                     ))
                   )}
