@@ -226,7 +226,9 @@ export class PumpPortalSocket {
     if (this.subscribedTokens.size >= 50) {
       // Remove oldest subscription
       const oldest = this.subscribedTokens.values().next().value
-      this.subscribedTokens.delete(oldest)
+      if (oldest) {
+        this.subscribedTokens.delete(oldest)
+      }
     }
 
     this.subscribedTokens.add(mint)

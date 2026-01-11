@@ -71,6 +71,7 @@ export default function Terminal() {
 
       // Update stats
       setStats(prev => ({
+        ...prev,
         tokensScanned: prev.tokensScanned + 1,
         excellent: prev.excellent + (token.status === 'EXCELLENT' ? 1 : 0),
         good: prev.good + (token.status === 'GOOD' ? 1 : 0),
